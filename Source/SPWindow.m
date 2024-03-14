@@ -31,13 +31,19 @@
 #import "SPWindow.h"
 #import "SPWindowController.h"
 
-@interface NSWindow (LionPlusMethods)
-- (void)toggleFullScreen:(id)sender;
-@end
-
 @implementation SPWindow
 
 @synthesize isSheetWhichCanBecomeMain;
+
+#pragma mark -
+
++ (void)initialize
+{
+	// Disable automatic window tabbing on 10.12+
+	if ([NSWindow respondsToSelector:@selector(setAllowsAutomaticWindowTabbing:)]) {
+		[NSWindow setAllowsAutomaticWindowTabbing:NO];
+	}
+}
 
 #pragma mark -
 #pragma mark Keyboard shortcut additions
@@ -54,7 +60,7 @@
 		unichar theCharacter = [[theEvent charactersIgnoringModifiers] characterAtIndex:0];
 
 		// ⌃⎋ sends a right-click to order front the context menu under the first responder's visible Rect
-		if ([theEvent keyCode] == 53 && (([theEvent modifierFlags] & NSDeviceIndependentModifierFlagsMask) == (NSAlternateKeyMask))) {
+		if ([theEvent keyCode] == 53 && (([theEvent modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagOption))) {
 
 			id firstResponder = [[NSApp keyWindow] firstResponder];
 
@@ -88,7 +94,7 @@
 			// Alternate keys for switching tabs - ⇧⌘[ and ⇧⌘].  These seem to be standards on some apps,
 			// including Apple applications under some circumstances
 			case '}':
-				if (([theEvent modifierFlags] & NSDeviceIndependentModifierFlagsMask) == (NSCommandKeyMask | NSShiftKeyMask))
+				if (([theEvent modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagCommand | NSEventModifierFlagShift))
 				{
 					if ([[self windowController] respondsToSelector:@selector(selectNextDocumentTab:)])
 						[[self windowController] selectNextDocumentTab:self];
@@ -96,7 +102,7 @@
 				}
 				break;
 			case '{':
-				if (([theEvent modifierFlags] & NSDeviceIndependentModifierFlagsMask) == (NSCommandKeyMask | NSShiftKeyMask))
+				if (([theEvent modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagCommand | NSEventModifierFlagShift))
 				{
 					if ([[self windowController] respondsToSelector:@selector(selectPreviousDocumentTab:)])
 						[[self windowController] selectPreviousDocumentTab:self];
@@ -106,7 +112,7 @@
 
 			// Also support ⌥⌘← and ⌥⌘→, used in other applications, for maximum compatibility
 			case NSRightArrowFunctionKey:
-				if (([theEvent modifierFlags] & NSDeviceIndependentModifierFlagsMask) == (NSCommandKeyMask | NSAlternateKeyMask | NSNumericPadKeyMask | NSFunctionKeyMask))
+				if (([theEvent modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagNumericPad | NSEventModifierFlagFunction))
 				{
 					if ([[self windowController] respondsToSelector:@selector(selectNextDocumentTab:)])
 						[[self windowController] selectNextDocumentTab:self];
@@ -114,7 +120,7 @@
 				}
 				break;
 			case NSLeftArrowFunctionKey:
-				if (([theEvent modifierFlags] & NSDeviceIndependentModifierFlagsMask) == (NSCommandKeyMask | NSAlternateKeyMask | NSNumericPadKeyMask | NSFunctionKeyMask))
+				if (([theEvent modifierFlags] & NSEventModifierFlagDeviceIndependentFlagsMask) == (NSEventModifierFlagCommand | NSEventModifierFlagOption | NSEventModifierFlagNumericPad | NSEventModifierFlagFunction))
 				{
 					if ([[self windowController] respondsToSelector:@selector(selectPreviousDocumentTab:)])
 						[[self windowController] selectPreviousDocumentTab:self];
@@ -140,7 +146,9 @@
 {
 	if ([[self windowController] respondsToSelector:@selector(selectedTableDocument)]) {
 		return [[[self windowController] selectedTableDocument] undoManager];
+
 	}
+
 	return [super undoManager];
 }
 
@@ -153,7 +161,6 @@
  */
 - (BOOL)canBecomeMainWindow
 {
-
 	// If this window is a sheet which is permitted to become main, respond appropriately
 	if ([self isSheet] && isSheetWhichCanBecomeMain) {
 		return [self isVisible];
@@ -190,7 +197,6 @@
 
 - (BOOL)validateMenuItem:(NSMenuItem *)menuItem
 {
-
 	// If the item is the Show/Hide Toolbar menu item, override the text to allow correct translation
 	if ([menuItem action] == @selector(toggleToolbarShown:)) {
 		BOOL theResponse = [super validateMenuItem:menuItem];

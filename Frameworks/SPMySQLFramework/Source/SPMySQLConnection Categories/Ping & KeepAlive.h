@@ -30,12 +30,6 @@
 
 // This class is private to the framework.
 
-typedef struct {
-	MYSQL	*mySQLConnection;
-	BOOL	*keepAlivePingActivePointer;
-	BOOL	*keepAliveLastPingSuccessPointer;
-} SPMySQLConnectionPingDetails;
-
 @interface SPMySQLConnection (Ping_and_KeepAlive)
 
 // Keepalive ping initialisation
@@ -51,6 +45,6 @@ void _forceThreadExit(int signalNumber);
 void _pingThreadCleanup(void *pingDetails);
 
 // Cancellation
-- (void)_cancelKeepAlives;
+- (BOOL)_cancelKeepAlives;
 
 @end

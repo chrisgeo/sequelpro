@@ -34,7 +34,6 @@
 #import "RegexKitLite.h"
 #import "SPDatabaseData.h"
 #import "SPDatabaseDocument.h"
-#import "SPDatabaseViewController.h"
 #import "SPTablesList.h"
 #import "SPAlertSheets.h"
 #import "SPTableStructure.h"
@@ -119,7 +118,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	if ([currentType isEqualToString:newType]) return;
 
 	// If the table is empty, perform the change directly
-	if ([[[tableDataInstance statusValues] objectForKey:SPMySQLRowsField] isEqualToString:@"0"]) {
+	if ([[tableDataInstance statusValueForKey:SPMySQLRowsField] isEqualToString:@"0"]) {
 		[self _changeCurrentTableTypeFrom:currentType to:newType];
 		return;
 	}
@@ -136,7 +135,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	
 	// Change the alert's cancel button to have the key equivalent of return
 	[[buttons objectAtIndex:0] setKeyEquivalent:@"d"];
-	[[buttons objectAtIndex:0] setKeyEquivalentModifierMask:NSCommandKeyMask];
+	[[buttons objectAtIndex:0] setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
 	[[buttons objectAtIndex:1] setKeyEquivalent:@"\r"];
 	
 	NSMutableDictionary *dataDict = [[NSMutableDictionary alloc] initWithCapacity:2];
@@ -171,9 +170,11 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	else {
 		[sender selectItemWithTitle:currentEncoding];
 
-		SPBeginAlertSheet(NSLocalizedString(@"Error changing table encoding", @"error changing table encoding message"),
-						  NSLocalizedString(@"OK", @"OK button"), nil, nil, [NSApp mainWindow], self, nil, nil,
-						  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table encoding to '%@'.\n\nMySQL said: %@", @"error changing table encoding informative message"), newEncoding, [connection lastErrorMessage]]);
+		SPOnewayAlertSheet(
+			NSLocalizedString(@"Error changing table encoding", @"error changing table encoding message"),
+			[NSApp mainWindow],
+			[NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table encoding to '%@'.\n\nMySQL said: %@", @"error changing table encoding informative message"), newEncoding, [connection lastErrorMessage]]
+		);
 	}
 }
 
@@ -198,9 +199,11 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	else {
 		[sender selectItemWithTitle:currentCollation];
 
-		SPBeginAlertSheet(NSLocalizedString(@"Error changing table collation", @"error changing table collation message"),
-						  NSLocalizedString(@"OK", @"OK button"), nil, nil, [NSApp mainWindow], self, nil, nil,
-						  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table collation to '%@'.\n\nMySQL said: %@", @"error changing table collation informative message"), newCollation, [connection lastErrorMessage]]);
+		SPOnewayAlertSheet(
+			NSLocalizedString(@"Error changing table collation", @"error changing table collation message"),
+			[NSApp mainWindow],
+			[NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table collation to '%@'.\n\nMySQL said: %@", @"error changing table collation informative message"), newCollation, [connection lastErrorMessage]]
+		);
 	}
 }
 
@@ -216,10 +219,15 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	}
 }
 
-- (IBAction)resetAutoIncrementValueWasEdited:(id)sender
+- (IBAction)tableRowAutoIncrementWasEdited:(id)sender
 {
 	[tableRowAutoIncrement setEditable:NO];
-	[tableSourceInstance setAutoIncrementTo:[[tableRowAutoIncrement stringValue] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]]];
+	
+	NSNumberFormatter *fmt = [[[NSNumberFormatter alloc] init] autorelease];
+	[fmt setNumberStyle:NSNumberFormatterDecimalStyle];
+	NSNumber *value = [fmt numberFromString:[tableRowAutoIncrement stringValue]];
+	
+	[tableSourceInstance setAutoIncrementTo:value];
 }
 
 - (BOOL)control:(NSControl *)control textView:(NSTextView *)textView doCommandBySelector:(SEL)command
@@ -227,6 +235,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	// Listen to ESC to abort editing of auto increment input field
 	if (command == @selector(cancelOperation:) && control == tableRowAutoIncrement) {
 		[tableRowAutoIncrement abortEditing];
+		[tableRowAutoIncrement setEditable:NO];
 		return YES;
 	}
 
@@ -326,7 +335,9 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	NSArray *encodings  = [databaseDataInstance getDatabaseCharacterSetEncodings];
 	NSArray *collations = [databaseDataInstance getDatabaseCollationsForEncoding:[tableDataInstance tableEncoding]];
 
-	if (([engines count] > 0) && ([statusFields objectForKey:SPMySQLEngineField])) {
+	NSString *storageEngine = [statusFields objectForKey:SPMySQLEngineField];
+
+	if ([engines count] > 0 && storageEngine) {
 
 		// Populate type popup button
 		for (NSDictionary *engine in engines)
@@ -334,8 +345,14 @@ static NSString *SPMySQLCommentField          = @"Comment";
 			[tableTypePopUpButton addItemWithTitle:[engine objectForKey:SPMySQLEngineField]];
 		}
 
-		[tableTypePopUpButton selectItemWithTitle:[statusFields objectForKey:SPMySQLEngineField]];
+		[tableTypePopUpButton selectItemWithTitle:storageEngine];
 		[tableTypePopUpButton setEnabled:enableInteraction];
+
+		// Object has a non-user storage engine (i.e. performance_schema) so just add it
+		if ([tableTypePopUpButton indexOfSelectedItem] == -1) {
+			[tableTypePopUpButton addItemWithTitle:storageEngine];
+			[tableTypePopUpButton selectItemWithTitle:storageEngine];
+		}
 	}
 	else {
 		[tableTypePopUpButton addItemWithTitle:NSLocalizedString(@"Not available", @"not available label")];
@@ -394,7 +411,8 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	[tableSizeFree setStringValue:[self _formatValueWithKey:SPMySQLDataFreeField inDictionary:statusFields]];
 
 	// Set comments
-	NSString *commentText = [statusFields objectForKey:SPMySQLCommentField];
+	// Note: On MySQL the comment column is marked as NOT NULL, but we still received crash reports because it was NULL!? (#2791)
+	NSString *commentText = [[statusFields objectForKey:SPMySQLCommentField] unboxNull];
 	
 	if (!commentText) commentText = @"";
 	
@@ -426,6 +444,8 @@ static NSString *SPMySQLCommentField          = @"Comment";
 
 /**
  * Returns a dictionary describing the information of the table to be used for printing purposes.
+ *
+ * MUST BE CALLED ON THE UI THREAD!
  */
 - (NSDictionary *)tableInformationForPrinting
 {
@@ -490,7 +510,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 	}
 
 	NSError *error = nil;
-	NSArray *HTMLExcludes = [NSArray arrayWithObjects:@"doctype", @"html", @"head", @"body", @"xml", nil];
+	NSArray *HTMLExcludes = @[@"doctype", @"html", @"head", @"body", @"xml"];
 
 	NSDictionary *attributes = [NSDictionary dictionaryWithObjectsAndKeys:NSHTMLTextDocumentType,
 		NSDocumentTypeDocumentAttribute, HTMLExcludes, NSExcludedElementsDocumentAttribute, nil];
@@ -531,7 +551,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 
 	if ((object == tableCommentsTextView) && ([object isEditable]) && ([selectedTable length] > 0)) {
 
-		NSString *currentComment = [[tableDataInstance statusValueForKey:@"Comment"] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
+		NSString *currentComment = [[[tableDataInstance statusValueForKey:SPMySQLCommentField] unboxNull] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 		NSString *newComment = [[tableCommentsTextView string] stringByTrimmingCharactersInSet:[NSCharacterSet whitespaceAndNewlineCharacterSet]];
 
 		// Check that the user actually changed the tables comment
@@ -545,9 +565,11 @@ static NSString *SPMySQLCommentField          = @"Comment";
 				[self reloadTable:self];
 			}
 			else {
-				SPBeginAlertSheet(NSLocalizedString(@"Error changing table comment", @"error changing table comment message"),
-								  NSLocalizedString(@"OK", @"OK button"), nil, nil, [NSApp mainWindow], self, nil, nil,
-								  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table's comment to '%@'.\n\nMySQL said: %@", @"error changing table comment informative message"), newComment, [connection lastErrorMessage]]);
+				SPOnewayAlertSheet(
+					NSLocalizedString(@"Error changing table comment", @"error changing table comment message"),
+					[NSApp mainWindow],
+					[NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table's comment to '%@'.\n\nMySQL said: %@", @"error changing table comment informative message"), newComment, [connection lastErrorMessage]]
+				);
 			}
 		}
 	}
@@ -649,9 +671,11 @@ static NSString *SPMySQLCommentField          = @"Comment";
 
 		[tableTypePopUpButton selectItemWithTitle:currentType];
 		
-		SPBeginAlertSheet(NSLocalizedString(@"Error changing table type", @"error changing table type message"),
-						  NSLocalizedString(@"OK", @"OK button"), nil, nil, [NSApp mainWindow], self, nil, nil,
-						  [NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table type to '%@'.\n\nMySQL said: %@", @"error changing table type informative message"), newType, [connection lastErrorMessage]]);
+		SPOnewayAlertSheet(
+			NSLocalizedString(@"Error changing table type", @"error changing table type message"),
+			[NSApp mainWindow],
+			[NSString stringWithFormat:NSLocalizedString(@"An error occurred when trying to change the table type to '%@'.\n\nMySQL said: %@", @"error changing table type informative message"), newType, [connection lastErrorMessage]]
+		);
 		
 		return;
 	}
@@ -667,7 +691,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 {
 	NSString *value = [infoDict objectForKey:key];
 
-	if ([value isNSNull]) {
+	if (![value unboxNull]) { // (value == nil || value == [NSNull null])
 		value = @"";
 	}
 	else {
@@ -720,7 +744,7 @@ static NSString *SPMySQLCommentField          = @"Comment";
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	
-	[connection release], connection = nil;
+	SPClear(connection);
 	
 	[super dealloc];
 }

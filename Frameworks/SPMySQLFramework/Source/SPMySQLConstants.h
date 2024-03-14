@@ -74,3 +74,29 @@ typedef enum {
 	SPMySQLResultAsLowMemStreamingResult = 2,
 	SPMySQLResultAsStreamingResultStore  = 3
 } SPMySQLResultType;
+
+// Redeclared from mysql_com.h (private header)
+typedef NS_OPTIONS(unsigned long, SPMySQLClientFlags) {
+	SPMySQLClientFlagCompression  = 32,          // CLIENT_COMPRESS
+	SPMySQLClientFlagInteractive  = 1024,        // CLIENT_INTERACTIVE
+	SPMySQLClientFlagMultiResults = (1UL << 17)  // CLIENT_MULTI_RESULTS = 131072
+};
+
+typedef struct {
+	unsigned int inTransaction:1;
+	unsigned int autocommit:1;
+	unsigned int _reserved1:1;
+	unsigned int moreResultsExists:1;
+	unsigned int queryNoGoodIndexUsed:1;
+	unsigned int queryNoIndexUsed:1;
+	unsigned int cursorExists:1;
+	unsigned int lastRowSent:1;
+	unsigned int dbDropped:1;
+	unsigned int noBackslashEscapes:1;
+	unsigned int metadataChanged:1;
+	unsigned int queryWasSlow:1;
+	unsigned int psOutParams:1;
+	unsigned int inTransReadonly:1;
+	unsigned int sessionStateChanged:1;
+	unsigned int _reserved2:1;
+} SPMySQLServerStatusBits;

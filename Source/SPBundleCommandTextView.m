@@ -40,8 +40,8 @@
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
 	[prefs removeObserver:self forKeyPath:SPCustomQueryEditorTabStopWidth];
-	[prefs release];
-	[lineNumberView release];
+	SPClear(prefs);
+	SPClear(lineNumberView);
 	[super dealloc];
 }
 
@@ -62,6 +62,10 @@
 	[commandScrollView setHasHorizontalRuler:NO];
 	[commandScrollView setHasVerticalRuler:YES];
 	[commandScrollView setRulersVisible:YES];
+	
+	// disable typo stuff in 10.8+ SDK
+	[self setAutomaticDashSubstitutionEnabled:NO];
+	[self setAutomaticQuoteSubstitutionEnabled:NO];
 
 	// Re-define tab stops for a better editing
 	[self setTabStops];
@@ -373,7 +377,7 @@
 	NSInteger tabStopWidth = [prefs integerForKey:SPCustomQueryEditorTabStopWidth];
 	if(tabStopWidth < 1) tabStopWidth = 1;
 
-	float tabWidth = NSSizeToCGSize([@" " sizeWithAttributes:[NSDictionary dictionaryWithObject:tvFont forKey:NSFontAttributeName]]).width;
+	float tabWidth = NSSizeToCGSize([@" " sizeWithAttributes:@{NSFontAttributeName : tvFont}]).width;
 	tabWidth = (float)tabStopWidth * tabWidth;
 
 	NSInteger numberOfTabs = 256/tabStopWidth;
@@ -479,7 +483,7 @@
 - (void)keyDown:(NSEvent *)theEvent
 {
 
-	long allFlags = (NSShiftKeyMask|NSControlKeyMask|NSAlternateKeyMask|NSCommandKeyMask);
+	NSEventModifierFlags allFlags = (NSEventModifierFlagShift|NSEventModifierFlagControl|NSEventModifierFlagOption|NSEventModifierFlagCommand);
 	
 	NSString *characters = [theEvent characters];
 	NSString *charactersIgnMod = [theEvent charactersIgnoringModifiers];
@@ -488,9 +492,9 @@
 		return;
 	}
 	unichar insertedCharacter = [characters characterAtIndex:0];
-	long curFlags = ([theEvent modifierFlags] & allFlags);
+	NSEventModifierFlags curFlags = ([theEvent modifierFlags] & allFlags);
 
-	if(curFlags & NSCommandKeyMask) {
+	if(curFlags & NSEventModifierFlagCommand) {
 		if([charactersIgnMod isEqualToString:@"+"] || [charactersIgnMod isEqualToString:@"="]) // increase text size by 1; ⌘+ and numpad +
 		{
 			[self makeTextSizeLarger];
@@ -530,7 +534,7 @@
 	// or a RETURN but not for each char due to writing speed
 	if ([charactersIgnMod isEqualToString:@" "] ||
 	    [theEvent keyCode] == 36 || 
-	    [theEvent modifierFlags] & (NSCommandKeyMask|NSControlKeyMask|NSAlternateKeyMask)) 
+	    [theEvent modifierFlags] & (NSEventModifierFlagCommand|NSEventModifierFlagControl|NSEventModifierFlagOption))
 	{
 		[(SPBundleEditorController *)[self delegate] setDoGroupDueToChars];
 	}
@@ -810,6 +814,13 @@
 - (void)boundsDidChangeNotification:(NSNotification *)notification
 {
 	[commandScrollView display];
+}
+
+- (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
+{
+	if([keyPath isEqualToString:SPCustomQueryEditorTabStopWidth]) {
+		[self setTabStops];
+	}
 }
 
 #pragma mark -

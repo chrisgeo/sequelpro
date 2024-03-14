@@ -31,6 +31,7 @@
 #import "SPMySQLResult.h"
 #import "SPMySQL Private APIs.h"
 #import "SPMySQLArrayAdditions.h"
+#include <stdlib.h>
 
 static id NSNullPointer;
 
@@ -47,7 +48,6 @@ static id NSNullPointer;
 
 + (void)initialize
 {
-
 	// Cached NSNull singleton reference
 	if (!NSNullPointer) NSNullPointer = [NSNull null];
 
@@ -58,7 +58,7 @@ static id NSNullPointer;
 /**
  * Standard initialisation - not intended for external use.
  */
-- (id)init
+- (instancetype)init
 {
 	if ((self = [super init])) {
 		stringEncoding = NSASCIIStringEncoding;
@@ -82,9 +82,8 @@ static id NSNullPointer;
  * Standard init method, constructing the SPMySQLResult around a MySQL
  * result pointer and the encoding to use when working with the data.
  */
-- (id)initWithMySQLResult:(void *)theResult stringEncoding:(NSStringEncoding)theStringEncoding
+- (instancetype)initWithMySQLResult:(void *)theResult stringEncoding:(NSStringEncoding)theStringEncoding
 {
-
 	// If no result set was passed in, return nil.
 	if (!theResult) return nil;
 
@@ -98,7 +97,7 @@ static id NSNullPointer;
 
 		// Cache the field definitions and build up an array of cached field names and types
 		fieldDefinitions = mysql_fetch_fields(resultSet);
-		fieldNames = malloc(sizeof(NSString *) * numberOfFields);
+		fieldNames = calloc(numberOfFields,sizeof(NSString *));
 		for (NSUInteger i = 0; i < numberOfFields; i++) {
 			MYSQL_FIELD aField = fieldDefinitions[i];
 			fieldNames[i] = [[self _stringWithBytes:aField.name length:aField.name_length] retain];
@@ -274,7 +273,6 @@ static id NSNullPointer;
  */
 - (NSUInteger)countByEnumeratingWithState:(NSFastEnumerationState *)state objects:(id *)stackbuf count:(NSUInteger)len
 {
-
 	// If the start index is out of bounds, return 0 to indicate end of results
 	if (state->state >= numberOfRows) return 0;
 
@@ -316,6 +314,37 @@ static id NSNullPointer;
 - (id)_stringWithBytes:(const void *)bytes length:(NSUInteger)length
 {
 	return [[[NSString alloc] initWithBytes:bytes length:length encoding:stringEncoding] autorelease];
+}
+#warning duplicate code with Data Conversion.m stringForDataBytes:length:encoding: (↑, ↓)
+- (NSString *)_lossyStringWithBytes:(const void *)bytes length:(NSUInteger)length wasLossy:(BOOL *)outLossy
+{
+	if(!bytes || !length) return @""; //to match -[NSString initWithBytes:length:encoding:]
+	
+	//mysql protocol limits column names to 256 bytes.
+	//with inline columns and multibyte charsets this can result in a character
+	//being split in half at which the method above will fail.
+	//Let's first try removing stuff from the end to create something valid.
+	NSUInteger removed = 0;
+	do {
+		NSString *res = [self _stringWithBytes:bytes length:(length-removed)];
+		if(res) {
+			if(outLossy) *outLossy = (removed != 0);
+			return (removed? [NSString stringWithFormat:@"%@…",res] : res);
+		}
+		removed++;
+	} while(removed <= 10 && removed < length); // 10 is arbitrary
+	
+	//if that fails, ascii should accept all values from 0-255 as input
+	NSString *ascii = [[NSString alloc] initWithBytes:bytes length:length encoding:NSASCIIStringEncoding];
+	if(ascii){
+		if(outLossy) *outLossy = YES;
+		return [ascii autorelease];
+	}
+	
+	//if even that failed we lose.
+	NSDictionary *info = @{ @"data": [NSData dataWithBytes:bytes length:length] };
+	NSString *reason = [NSString stringWithFormat:@"Failed to convert byte sequence %@ to string (encoding = %lu)",[info objectForKey:@"data"],stringEncoding];
+	@throw [NSException exceptionWithName:NSInternalInconsistencyException reason:reason userInfo:info];
 }
 
 /**

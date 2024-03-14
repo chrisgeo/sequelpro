@@ -30,6 +30,7 @@
 
 @class SPTablesList;
 @class SPMySQLConnection;
+@class SPCreateDatabaseInfo;
 
 @interface SPDatabaseAction : NSObject 
 {
@@ -41,16 +42,34 @@
 /**
  * @property connection References the SPMySQL.framework MySQL connection; it has to be set.
  */
-@property (readwrite, assign) SPMySQLConnection *connection;
+@property (nonnull, readwrite, assign) SPMySQLConnection *connection;
 
-/**
- * @property messageWindow The NSWindow instance to send message sheets to.
- */
-@property (readwrite, assign) NSWindow *messageWindow;
 
 /**
  * @property tablesList
  */
-@property (readwrite, assign) SPTablesList *tablesList;
+@property (nonnull, readwrite, assign) SPTablesList *tablesList;
+
+/**
+ * This method creates a new database.
+ *
+ * @param dbInfo database name/charset/collation (charset, collation may be nil)
+ *
+ * @return success
+ *
+ * @see createDatabase:withEncoding:collation:
+ */
+- (BOOL)createDatabase:(SPCreateDatabaseInfo * _Nonnull)databaseInfo;
+
+/**
+ * This method creates a new database.
+ *
+ * @param database  name of the new database to be created
+ * @param encoding  charset of the new database (can be nil to skip)
+ * @param collation sorting collation of the new database (can be nil)
+ *
+ * @return YES on success, otherwise NO
+ */
+- (BOOL)createDatabase:(NSString * _Nonnull)database withEncoding:(NSString * _Nullable)encoding collation:(NSString * _Nullable)collation;
 
 @end

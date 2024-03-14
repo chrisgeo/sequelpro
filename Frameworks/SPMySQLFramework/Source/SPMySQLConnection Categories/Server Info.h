@@ -45,4 +45,27 @@
 - (SPMySQLResult *)listProcesses;
 - (BOOL)killQueryOnThreadID:(unsigned long)theThreadID;
 
+/**
+ * mysql_shutdown() - If the user has the permission, will shutdown the (remote) server
+ * @return Whether the command was executed successfully
+ *         Note: this can also be NO if the user denied a reconnect attempt.
+ *
+ * WARNING: This method may return NO if the current thread is cancelled!
+ *          You MUST check the isCancelled flag before using the result!
+ */
+- (BOOL)serverShutdown;
+
+/**
+ * This method will update the passed-in bitfield struct with
+ * the server_status flags that were received most recently (i.e. usually
+ * in return to the last executed query).
+ *
+ * Calling this method will never affect the mysql error state.
+ *
+ * THIS METHOD IS NOT THREAD-SAFE!
+ *
+ * @return YES, unless the MySQL connection is invalid (in which case the passed-in struct remains unchanged)
+ */
+- (BOOL)updateServerStatusBits:(SPMySQLServerStatusBits *)bits;
+
 @end

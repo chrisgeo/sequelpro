@@ -31,15 +31,13 @@
 #import "SPIndexesController.h"
 #import "SPAlertSheets.h"
 #import "SPServerSupport.h"
-#import "SPTableContent.h"
 #import "SPTableData.h"
 #import "SPDatabaseDocument.h"
 #import "SPTablesList.h"
 #import "SPTableView.h"
-#import "SPDatabaseViewController.h"
 #import "SPTableStructure.h"
-#import "SPTableStructureLoading.h"
 #import "SPThreadAdditions.h"
+#import "SPFunctions.h"
 
 #import <SPMySQL/SPMySQL.h>
 
@@ -50,14 +48,19 @@ static const NSString *SPNewIndexIndexedColumns = @"IndexedColumns";
 static const NSString *SPNewIndexStorageType    = @"IndexStorageType";
 static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
-@interface SPIndexesController (PrivateAPI)
+/**
+ * This is the unique KVO context of code that resides in THIS class.
+ * Do not try to give it to other classes, ESPECIALLY NOT child classes!
+ */
+static void *IndexesControllerKVOContext = &IndexesControllerKVOContext;
 
+@interface SPIndexesController ()
+
+- (BOOL)_isFullTextIndexSelected;
 - (void)_addAdditionalIndexTypes;
 - (void)_reloadIndexedColumnsTableData;
-
 - (void)_addIndexUsingDetails:(NSDictionary *)indexDetails;
 - (void)_removeIndexUsingDetails:(NSDictionary *)indexDetails;
-
 - (void)_resizeWindowForAdvancedOptionsViewByHeightDelta:(NSInteger)delta;
 
 @end
@@ -67,32 +70,18 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 @synthesize table;
 @synthesize connection;
 
-#ifdef SP_CODA
-@synthesize indexesTableView;
-@synthesize tableStructure;
-@synthesize addIndexButton;
-@synthesize removeIndexButton;
-#endif
-
 #pragma mark -
 
 - (id)init
 {
-#ifndef SP_CODA
-	NSString* nibName = @"IndexesView";
-#else
-	NSString* nibName = @"SQLIndexes";
-#endif
-
-	if ((self = [super initWithWindowNibName:nibName])) {
-		_mainNibLoaded = NO;
+	if ((self = [super initWithWindowNibName:@"IndexesView"])) {
+		mainNibLoaded = NO;
 		table = @"";
 
 		fields  = [[NSMutableArray alloc] init];
 		indexes = [[NSMutableArray alloc] init];
 		indexedFields = [[NSMutableArray alloc] init];
 
-#ifndef SP_CODA /* init ivars */
 		prefs = [NSUserDefaults standardUserDefaults];
 
 		showAdvancedView = NO;
@@ -100,7 +89,6 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 		heightOffset = 0;
 		windowMinWidth = [[self window] minSize].width;
 		windowMinHeigth = [[self window] minSize].height;
-#endif
 
 		// Create an array of field types that supporting specifying an index length prefix
 		supportsLength = [[NSArray alloc] initWithObjects:
@@ -119,18 +107,14 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 - (void)awakeFromNib
 {
 	// As this controller also loads its own nib, it may call awakeFromNib multiple times; perform setup only once.
-	if (_mainNibLoaded) return;
-	_mainNibLoaded = YES;
+	if (mainNibLoaded) return;
+	mainNibLoaded = YES;
 
-#ifndef SP_CODA /* patch */
 	// Set the index tables view's vertical gridlines if required
 	[indexesTableView setGridStyleMask:([prefs boolForKey:SPDisplayTableViewVerticalGridlines]) ? NSTableViewSolidVerticalGridLineMask : NSTableViewGridNone];
 
 	// Set the strutcture and index view's font
 	BOOL useMonospacedFont = [prefs boolForKey:SPUseMonospacedFonts];
-#else
-	BOOL useMonospacedFont = NO;
-#endif
 
 	CGFloat monospacedFontSize = [prefs floatForKey:SPMonospacedFontSize] > 0 ? [prefs floatForKey:SPMonospacedFontSize] : [NSFont smallSystemFontSize];
 
@@ -147,9 +131,8 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 		[[fieldColumn dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
 	}
 
-#ifndef SP_CODA /* patch */
-	[prefs addObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines options:NSKeyValueObservingOptionNew context:NULL];
-#endif
+	[prefs addObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines options:NSKeyValueObservingOptionNew context:IndexesControllerKVOContext];
+	[prefs addObserver:self forKeyPath:SPUseMonospacedFonts                options:NSKeyValueObservingOptionNew context:IndexesControllerKVOContext];
 }
 
 #pragma mark -
@@ -166,7 +149,8 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	// Check whether a save of the current field row is required.
 	if (![tableStructure saveRowOnDeselect]) return;
 
-	isMyISAMTale = [[[tableData statusValues] objectForKey:@"Engine"] isEqualToString:@"MyISAM"];
+	isMyISAMTable = [[tableData statusValueForKey:@"Engine"] isEqualToString:@"MyISAM"];
+	isInnoDBTable = [[tableData statusValueForKey:@"Engine"] isEqualToString:@"InnoDB"];
 	
 	// Reset visibility of the primary key item
 	[[[indexTypePopUpButton menu] itemWithTag:SPPrimaryKeyMenuTag] setHidden:NO];
@@ -219,7 +203,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	// If no initial field has been selected yet - all fields are indexed - add the first field.
 	if (!initialField) initialField = [fields objectAtIndex:0];
 	
-	if (indexedFieldNames) [indexedFieldNames release], indexedFieldNames = nil;
+	[indexedFieldNames release];
 
 	// Reset the indexed columns
 	[indexedFields removeAllObjects];
@@ -233,16 +217,14 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 	[addIndexedColumnButton setEnabled:([indexedFields count] < [fields count])];
 
-#ifndef SP_CODA
 	// MyISAM and InnoDB tables only support BTREE storage types so disable the storage type popup button
 	// as it's the default anyway.
-	[indexStorageTypePopUpButton setEnabled:(!(isMyISAMTale || [[[tableData statusValues] objectForKey:@"Engine"] isEqualToString:@"InnoDB"]))];
+	[indexStorageTypePopUpButton setEnabled:(!(isMyISAMTable || isInnoDBTable))];
 
 	// The ability to specify an index's key block size was added in MySQL 5.1.10 so disable the textfield
 	// if it's not supported.
 	[indexKeyBlockSizeTextField setEnabled:[[dbDocument serverSupport] supportsIndexKeyBlockSize]];
-#endif
-	
+
 	// Begin the sheet
 	[NSApp beginSheet:[self window]
 	   modalForWindow:[dbDocument parentWindow]
@@ -268,31 +250,15 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 	if ((index == -1) || (index > ((NSInteger)[indexes count] - 1))) return;
 
-	NSString *keyName    =  [[indexes objectAtIndex:index] objectForKey:@"Key_name"];
-	NSString *columnName =  [[indexes objectAtIndex:index] objectForKey:@"Column_name"];
-
-	BOOL hasForeignKey = NO;
-	NSString *constraintName = @"";
-
-	// Check to see whether the user is attempting to remove an index that a foreign key constraint depends on
-	// thus would result in an error if not dropped before removing the index.
-	for (NSDictionary *constraint in [tableData getConstraints])
-	{
-		for (NSString *column in [constraint objectForKey:@"columns"])
-		{
-			if ([column isEqualToString:columnName]) {
-				hasForeignKey = YES;
-				constraintName = [constraint objectForKey:@"name"];
-				break;
-			}
-		}
-	}
+	NSString *keyName = [[indexes objectAtIndex:index] objectForKey:@"Key_name"];
+	
+	if(![keyName length]) return; //safeguard for the contextInfo array creation below
 
 	NSAlert *alert = [NSAlert alertWithMessageText:[NSString stringWithFormat:NSLocalizedString(@"Delete index '%@'?", @"delete index message"), keyName]
 									 defaultButton:NSLocalizedString(@"Delete", @"delete button")
 								   alternateButton:NSLocalizedString(@"Cancel", @"cancel button")
 									   otherButton:nil
-						 informativeTextWithFormat:hasForeignKey ? NSLocalizedString(@"The foreign key relationship '%@' has a dependency on this index. This relationship must be removed before the index can be deleted.\n\nAre you sure you want to continue to delete the relationship and the index? This action cannot be undone.", @"delete index and foreign key informative message"), constraintName : NSLocalizedString(@"Are you sure you want to delete the index '%@'? This action cannot be undone.", @"delete index informative message"), keyName];
+						 informativeTextWithFormat:NSLocalizedString(@"Are you sure you want to delete the index '%@'? This action cannot be undone.", @"delete index informative message"), keyName];
 
 	[alert setAlertStyle:NSCriticalAlertStyle];
 
@@ -300,10 +266,13 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 	// Change the alert's cancel button to have the key equivalent of return
 	[[buttons objectAtIndex:0] setKeyEquivalent:@"d"];
-	[[buttons objectAtIndex:0] setKeyEquivalentModifierMask:NSCommandKeyMask];
+	[[buttons objectAtIndex:0] setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
 	[[buttons objectAtIndex:1] setKeyEquivalent:@"\r"];
 
-	[alert beginSheetModalForWindow:[dbDocument parentWindow] modalDelegate:self didEndSelector:@selector(removeIndexSheetDidEnd:returnCode:contextInfo:) contextInfo:(hasForeignKey) ? @"removeIndexAndForeignKey" : @"removeIndex"];
+	[alert beginSheetModalForWindow:[dbDocument parentWindow]
+					  modalDelegate:self
+					 didEndSelector:@selector(removeIndexSheetDidEnd:returnCode:contextInfo:)
+						contextInfo:[@{@"Key_name" : keyName} retain]]; // contextInfo is NOT retained by Cocoa!
 }
 
 /**
@@ -316,9 +285,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	if (indexType == SPPrimaryKeyMenuTag) {
 		[indexNameTextField setEnabled:NO];
 		[indexNameTextField setStringValue:@"PRIMARY"];
-#ifndef SP_CODA
 		[indexStorageTypePopUpButton setEnabled:NO];
-#endif
 	}
 	else {
 		[indexNameTextField setEnabled:YES];
@@ -326,17 +293,14 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 		if ([[indexNameTextField stringValue] isEqualToString:@"PRIMARY"]) {
 			[indexNameTextField setStringValue:@""];
 		}
-		
-#ifndef SP_CODA
-		NSString *engine = [[tableData statusValues] objectForKey:@"Engine"];
-		
+
 		// Specifiying an index storage type (i.e. HASH or BTREE) is not permitted with SPATIAL indexes
-		[indexStorageTypePopUpButton setEnabled:(indexType != SPSpatialMenuTag) && !(isMyISAMTale || [engine isEqualToString:@"InnoDB"])];
-#endif
+		[indexStorageTypePopUpButton setEnabled:(indexType != SPSpatialMenuTag) && !(isMyISAMTable || isInnoDBTable)];
 	}
 	
-	[indexSizeTableColumn setHidden:[[indexTypePopUpButton selectedItem] tag] == SPFullTextMenuTag];
-	[indexesTableView reloadData];
+	[indexSizeTableColumn setHidden:[self _isFullTextIndexSelected]];
+
+	[self _reloadIndexedColumnsTableData];
 }
 
 /**
@@ -344,12 +308,10 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (IBAction)closeSheet:(id)sender
 {
-#ifndef SP_CODA
 	// Close the advanced options view if it's open
 	[indexAdvancedOptionsView setHidden:YES];
 	[indexAdvancedOptionsViewButton setState:NSOffState];
 	showAdvancedView = NO;
-#endif
 
 	// Hide the size column
 	[indexSizeTableColumn setHidden:YES];
@@ -358,11 +320,9 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 	[NSApp endSheet:[sender window] returnCode:[sender tag]];
 	[[sender window] orderOut:self];
-	
-#ifndef SP_CODA
+
 	// Clear the index key block size field
 	[indexKeyBlockSizeTextField setStringValue:@""];
-#endif
 }
 
 /**
@@ -411,7 +371,6 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (IBAction)toggleAdvancedIndexOptionsView:(id)sender
 {
-#ifndef SP_CODA
 	showAdvancedView = (!showAdvancedView);
 
 	[indexAdvancedOptionsViewButton setState:showAdvancedView];
@@ -430,8 +389,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	
 	[indexSizeTableColumn setHidden:hideSizesColumn];
 
-	[self _resizeWindowForAdvancedOptionsViewByHeightDelta:(showAdvancedView) ? ([indexAdvancedOptionsView frame].size.height + 10) : 0];
-#endif
+	[self _resizeWindowForAdvancedOptionsViewByHeightDelta:showAdvancedView ? ([indexAdvancedOptionsView frame].size.height + 10) : 0];
 }
 
 #pragma mark -
@@ -445,7 +403,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 - (id)tableView:(NSTableView *)tableView objectValueForTableColumn:(NSTableColumn *)tableColumn row:(NSInteger)rowIndex
 {
 
-	if(tableView == indexesTableView) {
+	if (tableView == indexesTableView) {
 	 	return [[indexes objectAtIndex:rowIndex] objectForKey:[tableColumn identifier]];
 	}
 	else {
@@ -498,7 +456,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 		// If the field is of type TEXT or BLOB then a index prefix length is required so change the default
 		// placeholder of 'optional' to 'required', BUT only if the index type is not FULLTEXT.
-		BOOL isFullTextType = [[indexTypePopUpButton selectedItem] tag] == SPFullTextMenuTag;
+		BOOL isFullTextType = [self _isFullTextIndexSelected];
 		
 		[cell setPlaceholderString:([requiresLength containsObject:[[[indexedFields objectAtIndex:rowIndex] objectForKey:@"type"] uppercaseString]] && !isFullTextType) ? NSLocalizedString(@"required", @"required placeholder string") : NSLocalizedString(@"optional", @"optional placeholder string")];
 	}
@@ -512,7 +470,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (NSInteger)numberOfItemsInComboBoxCell:(NSComboBoxCell *)comboBoxCell
 {
-	return ([fields count] - [indexedFields count]);
+	return [fields count] - [indexedFields count];
 }
 
 /**
@@ -566,6 +524,8 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	[indexedFields removeAllObjects];
 
 	if ([fields count]) [indexedFields addObject:[[[fields objectAtIndex:0] mutableCopy] autorelease]];
+	
+	[indexedColumnsTableView reloadData];
 }
 
 /**
@@ -579,13 +539,6 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 	[indexes setArray:tableIndexes];
 }
-
-#ifdef SP_CODA
-- (void)setDatabaseDocument:(SPDatabaseDocument*)db
-{
-	dbDocument = db;
-}
-#endif
 
 #pragma mark -
 #pragma mark Other methods
@@ -618,7 +571,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 			}
 		}
 
-		[copy release];
+		SPClear(copy);
 
 		// In the event that we removed duplicate columns reload the table view to ensure that the next time
 		// it is open we don't cause the table view to ask for rows that no longer exist.
@@ -626,7 +579,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 		[indexDetails setObject:indexedFields forKey:SPNewIndexIndexedColumns];
 		[indexDetails setObject:[indexNameTextField stringValue] forKey:SPNewIndexIndexName];
-		
+
 		switch ([[indexTypePopUpButton selectedItem] tag]) 
 		{
 			case SPPrimaryKeyMenuTag:
@@ -645,8 +598,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 				[indexDetails setObject:@"SPATIAL" forKey:SPNewIndexIndexType];
 				break;
 		}
-		
-#ifndef SP_CODA
+
 		// If there is a key block size set it means the database version supports it
 		if ([[indexKeyBlockSizeTextField stringValue] length]) {
 			[indexDetails setObject:[NSNumber numberWithInteger:[indexKeyBlockSizeTextField integerValue]] forKey:SPNewIndexKeyBlockSize];
@@ -655,10 +607,9 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 		if (([indexStorageTypePopUpButton indexOfSelectedItem] > 0) && ([[indexTypePopUpButton selectedItem] tag] != SPSpatialMenuTag)) {
 			[indexDetails setObject:[indexStorageTypePopUpButton titleOfSelectedItem] forKey:SPNewIndexStorageType];
 		}
-#endif
 
 		if ([NSThread isMainThread]) {
-			[NSThread detachNewThreadWithName:@"SPIndexesController index creation thread" target:self selector:@selector(_addIndexUsingDetails:) object:indexDetails];
+			[NSThread detachNewThreadWithName:SPCtxt(@"SPIndexesController index creation thread", dbDocument) target:self selector:@selector(_addIndexUsingDetails:) object:indexDetails];
 
 			[dbDocument enableTaskCancellationWithTitle:NSLocalizedString(@"Cancel", @"cancel button") callbackObject:self callbackFunction:NULL];
 		}
@@ -676,22 +627,19 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 {
 	// Order out current sheet to suppress overlapping of sheets
 	[[alert window] orderOut:nil];
+	
+	NSDictionary *info = [(id)contextInfo autorelease]; //we explicitly retained it beforehand, because Cocoa does NOT!
 
 	if (returnCode == NSAlertDefaultReturn) {
 		[dbDocument startTaskWithDescription:NSLocalizedString(@"Removing index...", @"removing index task status message")];
 
-		NSMutableDictionary *indexDetails = [NSMutableDictionary dictionary];
-
-		[indexDetails setObject:[indexes objectAtIndex:[indexesTableView selectedRow]] forKey:@"Index"];
-		[indexDetails setObject:[NSNumber numberWithBool:[(NSString *)contextInfo hasSuffix:@"AndForeignKey"]] forKey:@"RemoveForeignKey"];
-
 		if ([NSThread isMainThread]) {
-			[NSThread detachNewThreadWithName:@"SPIndexesController index removal thread" target:self selector:@selector(_removeIndexUsingDetails:) object:indexDetails];
+			[NSThread detachNewThreadWithName:SPCtxt(@"SPIndexesController index removal thread", dbDocument) target:self selector:@selector(_removeIndexUsingDetails:) object:info];
 
 			[dbDocument enableTaskCancellationWithTitle:NSLocalizedString(@"Cancel", @"cancel button") callbackObject:self callbackFunction:NULL];
 		}
 		else {
-			[self _removeIndexUsingDetails:indexDetails];
+			[self _removeIndexUsingDetails:info];
 		}
 	}
 }
@@ -701,29 +649,35 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (void)observeValueForKeyPath:(NSString *)keyPath ofObject:(id)object change:(NSDictionary *)change context:(void *)context
 {
-	// Display table veiew vertical gridlines preference changed
-	if ([keyPath isEqualToString:SPDisplayTableViewVerticalGridlines]) {
-		[indexesTableView setGridStyleMask:([[change objectForKey:NSKeyValueChangeNewKey] boolValue]) ? NSTableViewSolidVerticalGridLineMask : NSTableViewGridNone];
+	// a parent class (or cocoa) can also use KVO, so we need to watch out to only catch those KVO messages we requested
+	if(context == IndexesControllerKVOContext) {
+		// Display table veiew vertical gridlines preference changed
+		if ([keyPath isEqualToString:SPDisplayTableViewVerticalGridlines]) {
+			[indexesTableView setGridStyleMask:([[change objectForKey:NSKeyValueChangeNewKey] boolValue]) ? NSTableViewSolidVerticalGridLineMask : NSTableViewGridNone];
+		}
+		// Use monospaced fonts preference changed
+		else if ([keyPath isEqualToString:SPUseMonospacedFonts]) {
+
+			BOOL useMonospacedFont = [[change objectForKey:NSKeyValueChangeNewKey] boolValue];
+			CGFloat monospacedFontSize = [prefs floatForKey:SPMonospacedFontSize] > 0 ? [prefs floatForKey:SPMonospacedFontSize] : [NSFont smallSystemFontSize];
+
+			for (NSTableColumn *indexColumn in [indexesTableView tableColumns])
+			{
+				[[indexColumn dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+			}
+
+			for (NSTableColumn *indexColumn in [indexedColumnsTableView tableColumns])
+			{
+				[[indexColumn dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
+			}
+
+			[indexesTableView reloadData];
+
+			[self _reloadIndexedColumnsTableData];
+		}
 	}
-	// Use monospaced fonts preference changed
-	else if ([keyPath isEqualToString:SPUseMonospacedFonts]) {
-
-		BOOL useMonospacedFont = [[change objectForKey:NSKeyValueChangeNewKey] boolValue];
-		CGFloat monospacedFontSize = [prefs floatForKey:SPMonospacedFontSize] > 0 ? [prefs floatForKey:SPMonospacedFontSize] : [NSFont smallSystemFontSize];
-
-		for (NSTableColumn *indexColumn in [indexesTableView tableColumns])
-		{
-			[[indexColumn dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-		}
-
-		for (NSTableColumn *indexColumn in [indexedColumnsTableView tableColumns])
-		{
-			[[indexColumn dataCell] setFont:useMonospacedFont ? [NSFont fontWithName:SPDefaultMonospacedFontName size:monospacedFontSize] : [NSFont systemFontOfSize:[NSFont smallSystemFontSize]]];
-		}
-
-		[indexesTableView reloadData];
-
-		[self _reloadIndexedColumnsTableData];
+	else {
+		[super observeValueForKeyPath:keyPath ofObject:object change:change context:context];
 	}
 }
 
@@ -734,7 +688,7 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 {
 	// Remove index
 	if ([menuItem action] == @selector(removeIndex:)) {
-		return ([indexesTableView numberOfSelectedRows] == 1);
+		return [indexesTableView numberOfSelectedRows] == 1;
 	}
 
 	// Reset AUTO_INCREMENT
@@ -756,6 +710,14 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 #pragma mark Private API methods
 
 /**
+ * Is the currently selected index type FULLTEXT.
+ */
+- (BOOL)_isFullTextIndexSelected
+{
+	return [indexTypePopUpButton selectedTag] == SPFullTextMenuTag;
+}
+
+/**
  * Adds any additional index types depending on the table type.
  */
 - (void)_addAdditionalIndexTypes
@@ -768,8 +730,8 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 		[indexTypePopUpButton removeItemAtIndex:[indexTypePopUpButton indexOfItemWithTag:SPFullTextMenuTag]];
 	}
 	
-	// FULLTEXT and SPATIAL index types are only available using the MyISAM engine
-	if (isMyISAMTale) {
+	// SPATIAL index types are only available using the MyISAM engine
+	if (isMyISAMTable) {
 		if ([[dbDocument serverSupport] supportsSpatialExtensions]) {
 			NSMenuItem *spatialMenuItem = [[[NSMenuItem alloc] init] autorelease];
 			
@@ -778,7 +740,10 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 			
 			[[indexTypePopUpButton menu] addItem:spatialMenuItem];
 		}
+	}
 	
+	// FULLTEXT only works with MyISAM and (InnoDB since 5.6.4)
+	if (isMyISAMTable || (isInnoDBTable && [[dbDocument serverSupport] supportsFulltextOnInnoDB])) {
 		NSMenuItem *fullTextMenuItem = [[[NSMenuItem alloc] init] autorelease];
 		
 		[fullTextMenuItem setTitle:NSLocalizedString(@"FULLTEXT", @"full text index menu item title")];
@@ -796,22 +761,22 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	NSUInteger sizeRequiredFieldAndNotYetSet = 0;
 	NSUInteger sizeRequired = 0;
 
+	BOOL isFullTextType = [self _isFullTextIndexSelected];
+
 	for (NSDictionary *field in indexedFields) 
 	{
-		if ([requiresLength containsObject:[[field objectForKey:@"type"] uppercaseString]]) {
+		if (!isFullTextType && [requiresLength containsObject:[[field objectForKey:@"type"] uppercaseString]]) {
 			sizeRequired++;
 			sizeRequiredFieldAndNotYetSet++;
 			
 			if ([field objectForKey:@"Size"] && [(NSString *)[field objectForKey:@"Size"] length]) {
 				sizeRequiredFieldAndNotYetSet--;
+			}
 		}
 	}
-	}
 
-#ifndef SP_CODA
 	// Only toggle the sizes column if the advanced view is hidden and at least one field requires a size
 	if (!showAdvancedView) [indexSizeTableColumn setHidden:!sizeRequired];
-#endif
 
 	// Validate Add Button
 	[confirmAddIndexButton setEnabled:!sizeRequiredFieldAndNotYetSet];
@@ -826,105 +791,109 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (void)_addIndexUsingDetails:(NSDictionary *)indexDetails
 {
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
+		// Check whether a save of the current fields row is required.
+		if (![[tableStructure onMainThread] saveRowOnDeselect]) return;
 
-	// Check whether a save of the current fields row is required.
-	if (![[tableStructure onMainThread] saveRowOnDeselect]) return;
+		// Retrieve index details
+		NSString *indexName         = [indexDetails objectForKey:SPNewIndexIndexName];
+		NSString *indexType         = [indexDetails objectForKey:SPNewIndexIndexType];
+		NSString *indexStorageType  = [indexDetails objectForKey:SPNewIndexStorageType];
+		NSNumber *indexKeyBlockSize = [indexDetails objectForKey:SPNewIndexKeyBlockSize];
+		NSArray  *indexedColumns    = [indexDetails objectForKey:SPNewIndexIndexedColumns];
 
-	// Retrieve index details
-	NSString *indexName         = [indexDetails objectForKey:SPNewIndexIndexName];
-	NSString *indexType         = [indexDetails objectForKey:SPNewIndexIndexType];
-	NSString *indexStorageType  = [indexDetails objectForKey:SPNewIndexStorageType];
-	NSNumber *indexKeyBlockSize = [indexDetails objectForKey:SPNewIndexKeyBlockSize]; 
-	
-	NSArray *indexedColumns    = [indexDetails objectForKey:SPNewIndexIndexedColumns];
+		// Interface validation should prevent this, but just to be safe
+		if ([indexedColumns count] > 0) {
 
-	// Interface validation should prevent this, but just to be safe
-	if ([indexedColumns count] > 0) {
+			NSMutableArray *tempIndexedColumns = [[NSMutableArray alloc] init];
 
-		NSMutableArray *tempIndexedColumns = [[NSMutableArray alloc] init];
-
-		if ([indexType isEqualToString:@"PRIMARY KEY"]) {
-			indexName = @"";
-		}
-		else {
-			indexName = ([indexName isEqualToString:@""]) ? @"" : [indexName backtickQuotedString];
-		}
-
-		// For each column add it to the temp array and check if size is required
-		for (NSDictionary *column in indexedColumns)
-		{
-			NSString *columnName = [column objectForKey:@"name"];
-			NSString *columnType = [column objectForKey:@"type"];
-
-			if ((![columnName length]) || (![columnType length])) continue;
-
-			BOOL isFullTextType = [indexType isEqualToString:@"FULLTEXT"];
-			
-			// If this field type requires a length and one hasn't been specified (interface validation
-			// should ensure this doesn't happen), then skip it.
-			if ([requiresLength containsObject:[columnType uppercaseString]] && (![(NSString *)[column objectForKey:@"Size"] length]) && !isFullTextType) continue;
-
-			if ([column objectForKey:@"Size"] && [supportsLength containsObject:columnType] && !isFullTextType) {
-
-				[tempIndexedColumns addObject:[NSString stringWithFormat:@"%@ (%@)", [columnName backtickQuotedString], [column objectForKey:@"Size"]]];
+			if ([indexType isEqualToString:@"PRIMARY KEY"]) {
+				indexName = @"";
 			}
 			else {
-				[tempIndexedColumns addObject:[columnName backtickQuotedString]];
+				indexName = ([indexName isEqualToString:@""]) ? @"" : [indexName backtickQuotedString];
 			}
+
+			// For each column add it to the temp array and check if size is required
+			for (NSDictionary *column in indexedColumns)
+			{
+				NSString *columnName = [column objectForKey:@"name"];
+				NSString *columnType = [column objectForKey:@"type"];
+
+				if ((![columnName length]) || (![columnType length])) continue;
+
+				BOOL isFullTextType = [indexType isEqualToString:@"FULLTEXT"];
+
+				// If this field type requires a length and one hasn't been specified (interface validation
+				// should ensure this doesn't happen), then skip it.
+				if ([requiresLength containsObject:[columnType uppercaseString]] && (![(NSString *)[column objectForKey:@"Size"] length]) && !isFullTextType) continue;
+
+				if ([column objectForKey:@"Size"] && [supportsLength containsObject:columnType] && !isFullTextType) {
+					[tempIndexedColumns addObject:[NSString stringWithFormat:@"%@ (%@)", [columnName backtickQuotedString], [column objectForKey:@"Size"]]];
+				}
+				else {
+					[tempIndexedColumns addObject:[columnName backtickQuotedString]];
+				}
+			}
+
+			if ([tempIndexedColumns count]) {
+
+				if ((![indexType isEqualToString:@"INDEX"]) && (![indexType isEqualToString:@"PRIMARY KEY"])) indexType = [indexType stringByAppendingFormat:@" INDEX"];
+
+				// Build the query
+				NSMutableString *query = [NSMutableString stringWithFormat:@"ALTER TABLE %@ ADD %@", [table backtickQuotedString], indexType];
+
+				// If supplied specify the index's name
+				if ([indexName length]) {
+					[query appendString:@" "];
+					[query appendString:indexName];
+				}
+
+				// If supplied specify the index's storage type
+				if (indexStorageType) {
+					[query appendString:@" USING "];
+					[query appendString:indexStorageType];
+				}
+
+				// Add the columns
+				[query appendFormat:@" (%@)", [tempIndexedColumns componentsJoinedByCommas]];
+
+				// If supplied specify the index's key block size
+				if (indexKeyBlockSize) {
+					[query appendFormat:@" KEY_BLOCK_SIZE = %ld", (long)[indexKeyBlockSize integerValue]];
+				}
+
+				// Execute the query
+				[connection queryString:query];
+
+				// Check for errors, but only if the query wasn't cancelled
+				if ([connection queryErrored] && ![connection lastQueryWasCancelled]) {
+					SPOnewayAlertSheet(
+						NSLocalizedString(@"Unable to add index", @"add index error message"),
+						[dbDocument parentWindow],
+						[NSString stringWithFormat:NSLocalizedString(@"An error occured while trying to add the index.\n\nMySQL said: %@", @"add index error informative message"), [connection lastErrorMessage]]
+					);
+				}
+				else {
+					[tableData resetAllData];
+					[dbDocument setStatusRequiresReload:YES];
+
+					[tableStructure loadTable:table];
+				}
+			}
+
+			[tempIndexedColumns release];
 		}
-				
-		if ((![indexType isEqualToString:@"INDEX"]) && (![indexType isEqualToString:@"PRIMARY KEY"])) indexType = [indexType stringByAppendingFormat:@" INDEX"];
 
-		// Build the query
-		NSMutableString *query = [NSMutableString stringWithFormat:@"ALTER TABLE %@ ADD %@", [table backtickQuotedString], indexType];
+		SPMainQSync(^{
+			// Reset indexed fields to default
+			[indexedFields removeAllObjects];
+			[indexedFields addObject:[[[fields objectAtIndex:0] mutableCopy] autorelease]];
+			[indexedColumnsTableView reloadData];
+		});
 
-		// If supplied specify the index's name
-		if ([indexName length]) {
-			[query appendString:@" "];
-			[query appendString:indexName];
-		}
-
-		// If supplied specify the index's storage type
-		if (indexStorageType) {
-			[query appendString:@" USING "];
-			[query appendString:indexStorageType];
-		}
-
-		// Add the columns
-		[query appendFormat:@" (%@)", [tempIndexedColumns componentsJoinedByCommas]];
-		
-		// If supplied specify the index's key block size
-		if (indexKeyBlockSize) {
-			[query appendFormat:@" KEY_BLOCK_SIZE = %ld", (long)[indexKeyBlockSize integerValue]];
-		}
-
-		// Execute the query
-		[connection queryString:query];
-
-		// Release temp array
-		[tempIndexedColumns release];
-
-		// Check for errors, but only if the query wasn't cancelled
-		if ([connection queryErrored] && ![connection lastQueryWasCancelled]) {
-			SPBeginAlertSheet(NSLocalizedString(@"Unable to add index", @"add index error message"), NSLocalizedString(@"OK", @"OK button"), nil, nil, [dbDocument parentWindow], self, nil, nil,
-							  [NSString stringWithFormat:NSLocalizedString(@"An error occured while trying to add the index.\n\nMySQL said: %@", @"add index error informative message"), [connection lastErrorMessage]]);
-		}
-		else {
-			[tableData resetAllData];
-			[dbDocument setStatusRequiresReload:YES];
-
-			[tableStructure loadTable:table];
-		}
+		[dbDocument endTask];
 	}
-
-	// Reset indexed fields to default
-	[indexedFields removeAllObjects];
-	[indexedFields addObject:[[[fields objectAtIndex:0] mutableCopy] autorelease]];
-
-	[dbDocument endTask];
-
-	[pool drain];
 }
 
 /**
@@ -934,71 +903,137 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (void)_removeIndexUsingDetails:(NSDictionary *)indexDetails
 {
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
+	@autoreleasepool {
+		NSString *index   = [indexDetails objectForKey:@"Key_name"];
+		NSString *fkName  = [indexDetails objectForKey:@"ForeignKey"];
 
-	NSDictionary *index   = [indexDetails objectForKey:@"Index"];
-	BOOL removeForeignKey = [[indexDetails objectForKey:@"RemoveForeignKey"] boolValue];
+		// Remove the foreign key dependency before the index if required
+		if ([fkName length]) {
 
-	// Remove the foreign key dependency before the index if required
-	if (removeForeignKey) {
+			[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP FOREIGN KEY %@", [table backtickQuotedString], [fkName backtickQuotedString]]];
 
-		NSString *columnName =  [index objectForKey:@"Column_name"];
+			// Check for errors, but only if the query wasn't cancelled
+			if ([connection queryErrored] && ![connection lastQueryWasCancelled]) {
+				NSMutableDictionary *errorDictionary = [NSMutableDictionary dictionary];
 
-		NSString *constraintName = @"";
+				[errorDictionary setObject:NSLocalizedString(@"Unable to delete relation", @"error deleting relation message") forKey:@"title"];
+				[errorDictionary setObject:[NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to delete the relation '%@'.\n\nMySQL said: %@", @"error deleting relation informative message"), fkName, [connection lastErrorMessage]] forKey:@"message"];
 
-		// Check to see whether the user is attempting to remove an index that a foreign key constraint depends on
-		// thus would result in an error if not dropped before removing the index.
-		for (NSDictionary *constraint in [tableData getConstraints])
-		{
-			for (NSString *column in [constraint objectForKey:@"columns"])
-			{
-				if ([column isEqualToString:columnName]) {
-					constraintName = [constraint objectForKey:@"name"];
-					break;
-				}
+				[[tableStructure onMainThread] showErrorSheetWith:errorDictionary];
 			}
 		}
 
-		[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP FOREIGN KEY %@", [table backtickQuotedString], [constraintName backtickQuotedString]]];
+		if ([index isEqualToString:@"PRIMARY"]) {
+			[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP PRIMARY KEY", [table backtickQuotedString]]];
+		}
+		else {
+			[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP INDEX %@",
+			                                                   [table backtickQuotedString], [index backtickQuotedString]]];
+		}
 
 		// Check for errors, but only if the query wasn't cancelled
 		if ([connection queryErrored] && ![connection lastQueryWasCancelled]) {
-			NSMutableDictionary *errorDictionary = [NSMutableDictionary dictionary];
+			//if the last error was 1553 and we did not already try to remove a FK beforehand, we have to request to remove the foreign key before we can remove the index
+			if([connection lastErrorID] == 1553 /* ER_DROP_INDEX_FK */ && ![fkName length]) {
+				NSDictionary *details = @{
+					@"Key_name": index,
+					@"error": SPBoxNil([connection lastErrorMessage])
+				};
+				[self performSelectorOnMainThread:@selector(_removingIndexFailedWithForeignKeyError:) withObject:details waitUntilDone:NO];
+			}
+			else {
+				NSMutableDictionary *errorDictionary = [NSMutableDictionary dictionary];
 
-			[errorDictionary setObject:NSLocalizedString(@"Unable to delete relation", @"error deleting relation message") forKey:@"title"];
-			[errorDictionary setObject:[NSString stringWithFormat:NSLocalizedString(@"An error occurred while trying to delete the relation '%@'.\n\nMySQL said: %@", @"error deleting relation informative message"), constraintName, [connection lastErrorMessage]] forKey:@"message"];
+				[errorDictionary setObject:NSLocalizedString(@"Unable to delete index", @"error deleting index message") forKey:@"title"];
+				[errorDictionary setObject:[NSString stringWithFormat:NSLocalizedString(@"An error occured while trying to delete the index.\n\nMySQL said: %@", @"error deleting index informative message"), [connection lastErrorMessage]] forKey:@"message"];
 
-			[(SPTableStructure*)[tableStructure onMainThread] showErrorSheetWith:errorDictionary];
+				[[tableStructure onMainThread] showErrorSheetWith:errorDictionary];
+			}
+		}
+		else {
+			[tableData resetAllData];
+			[dbDocument setStatusRequiresReload:YES];
+
+			[tableStructure loadTable:table];
+		}
+
+		[dbDocument endTask];
+	}
+}
+
+/**
+ * If removing an index failed, because an FK depends on it (mysql error 1553) this
+ * will ask the user to confirm deleting the FK, too (if it is found).
+ *
+ * MUST be called on the UI thread!
+ */
+- (void)_removingIndexFailedWithForeignKeyError:(NSDictionary *)info
+{
+	NSString *keyName = [info objectForKey:@"Key_name"];
+	
+	//we have to find out which fk uses this index (and need to watch out for compound indexes)
+	NSString *constraintName = nil;
+	
+	NSMutableArray *myColumns = [NSMutableArray array];
+	
+	for (NSDictionary *indexPart in indexes) {
+		if ([[indexPart objectForKey:@"Key_name"] isEqualToString:keyName]) {
+			[myColumns addObject:[indexPart objectForKey:@"Column_name"]];
 		}
 	}
-
-	if ([[index objectForKey:@"Key_name"] isEqualToString:@"PRIMARY"]) {
-		[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP PRIMARY KEY", [table backtickQuotedString]]];
+	
+	//if the index has no columns, something's fucky
+	if(![myColumns count]) {
+		SPOnewayAlertSheet(
+			[NSString stringWithFormat:NSLocalizedString(@"Failed to remove index '%@'", @"table structure : indexes : delete index : no columns error : title"),keyName],
+			[dbDocument parentWindow],
+			NSLocalizedString(@"Sequel Pro could not find any columns belonging to this index. Maybe it has been removed already?", @"table structure : indexes : delete index : no columns error : description")
+		);
+		return;
 	}
-	else {
-		[connection queryString:[NSString stringWithFormat:@"ALTER TABLE %@ DROP INDEX %@",
-								 [table backtickQuotedString], [[index objectForKey:@"Key_name"] backtickQuotedString]]];
+	
+	[myColumns sortUsingSelector:@selector(compare:)];
+	
+	//now let's find a matching fk (ie. one that has the same columns as the index)
+	for (NSDictionary *fkInfo in [tableData getConstraints]) {
+		NSArray *fkColumns = [[fkInfo objectForKey:@"columns"] sortedArrayUsingSelector:@selector(compare:)];
+		if(![myColumns isEqualToArray:fkColumns]) continue;
+		if(constraintName != nil) {
+			goto no_or_multiple_matches; //we already found a matching FK, but there is another one!? -> abort
+		}
+		constraintName = [fkInfo objectForKey:@"name"];
 	}
-
-	// Check for errors, but only if the query wasn't cancelled
-	if ([connection queryErrored] && ![connection lastQueryWasCancelled]) {
-		NSMutableDictionary *errorDictionary = [NSMutableDictionary dictionary];
-
-		[errorDictionary setObject:NSLocalizedString(@"Unable to delete index", @"error deleting index message") forKey:@"title"];
-		[errorDictionary setObject:[NSString stringWithFormat:NSLocalizedString(@"An error occured while trying to delete the index.\n\nMySQL said: %@", @"error deleting index informative message"), [connection lastErrorMessage]] forKey:@"message"];
-
-		[(SPTableStructure*)[tableStructure onMainThread] showErrorSheetWith:errorDictionary];
-	}
-	else {
-		[tableData resetAllData];
-		[dbDocument setStatusRequiresReload:YES];
-
-		[tableStructure loadTable:table];
-	}
-
-	[dbDocument endTask];
-
-	[pool drain];
+	
+	if(!constraintName) goto no_or_multiple_matches; //we found no matching FK
+	
+	NSAlert *alert = [NSAlert alertWithMessageText:NSLocalizedString(@"A foreign key needs this index", @"table structure : indexes : delete index : error 1553 : title")
+									 defaultButton:NSLocalizedString(@"Delete Both", @"table structure : indexes : delete index : error 1553 : delete index and FK button")
+								   alternateButton:NSLocalizedString(@"Cancel", @"cancel button")
+									   otherButton:nil
+						 informativeTextWithFormat:NSLocalizedString(@"The foreign key relationship '%@' has a dependency on index '%@'. This relationship must be removed before the index can be deleted.\n\nAre you sure you want to continue to delete the relationship and the index? This action cannot be undone.", @"table structure : indexes : delete index : error 1553 : description"), constraintName, keyName];
+	
+	[alert setAlertStyle:NSCriticalAlertStyle];
+	
+	NSArray *buttons = [alert buttons];
+	
+	// Change the alert's cancel button to have the key equivalent of return
+	[[buttons objectAtIndex:0] setKeyEquivalent:@"d"];
+	[[buttons objectAtIndex:0] setKeyEquivalentModifierMask:NSEventModifierFlagCommand];
+	[[buttons objectAtIndex:1] setKeyEquivalent:@"\r"];
+	
+	[alert beginSheetModalForWindow:[dbDocument parentWindow]
+	                  modalDelegate:self
+	                 didEndSelector:@selector(removeIndexSheetDidEnd:returnCode:contextInfo:)
+	                    contextInfo:[@{@"Key_name" : keyName, @"ForeignKey": constraintName} retain]]; // contextInfo is NOT retained by Cocoa!
+	
+	return;
+	
+no_or_multiple_matches:
+	SPOnewayAlertSheet(
+		NSLocalizedString(@"A foreign key needs this index", @"table structure : indexes : delete index : error 1553, no FK found : title"),
+		[dbDocument parentWindow],
+		[NSString stringWithFormat:NSLocalizedString(@"This index cannot be deleted, because it is used by an existing foreign key relationship.\n\nPlease remove the relationship, before trying to remove this index.\n\nMySQL said: %@", @"table structure : indexes : delete index : error 1553, no FK found : description"), [info objectForKey:@"error"]]
+	);
 }
 
 /**
@@ -1009,18 +1044,15 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
  */
 - (void)_resizeWindowForAdvancedOptionsViewByHeightDelta:(NSInteger)delta
 {
-	NSUInteger popUpMask        = [indexTypePopUpButton autoresizingMask];
-	NSUInteger nameFieldMask    = [indexNameTextField autoresizingMask];
-	NSUInteger scrollMask       = [indexedColumnsScrollView autoresizingMask];
-#ifndef SP_CODA
-	NSUInteger buttonMask       = [indexAdvancedOptionsViewButton autoresizingMask];
-	NSUInteger textFieldMask    = [indexAdvancedOptionsViewLabelButton autoresizingMask];
-	NSUInteger advancedViewMask = [indexAdvancedOptionsView autoresizingMask];
-#endif
-	NSUInteger typeLabelMask    = [indexTypeLabel autoresizingMask];
-	NSUInteger nameLabelMask    = [indexNameLabel autoresizingMask];
-#ifndef SP_CODA
-	NSUInteger buttonBarMask    = [(NSView*)anchoredButtonBar autoresizingMask];
+	NSAutoresizingMaskOptions popUpMask        = [indexTypePopUpButton autoresizingMask];
+	NSAutoresizingMaskOptions nameFieldMask    = [indexNameTextField autoresizingMask];
+	NSAutoresizingMaskOptions scrollMask       = [indexedColumnsScrollView autoresizingMask];
+	NSAutoresizingMaskOptions buttonMask       = [indexAdvancedOptionsViewButton autoresizingMask];
+	NSAutoresizingMaskOptions textFieldMask    = [indexAdvancedOptionsViewLabelButton autoresizingMask];
+	NSAutoresizingMaskOptions advancedViewMask = [indexAdvancedOptionsView autoresizingMask];
+	NSAutoresizingMaskOptions typeLabelMask    = [indexTypeLabel autoresizingMask];
+	NSAutoresizingMaskOptions nameLabelMask    = [indexNameLabel autoresizingMask];
+	NSAutoresizingMaskOptions buttonBarMask    = [anchoredButtonBar autoresizingMask];
 
 	NSRect frame = [[self window] frame];
 
@@ -1030,27 +1062,21 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 
 		[[self window] setFrame:frame display:YES animate:YES];
 	}
-#endif
 
 	[indexTypePopUpButton setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 	[indexNameTextField setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 	[indexedColumnsScrollView setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
-#ifndef SP_CODA
 	[indexAdvancedOptionsViewButton setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 	[indexAdvancedOptionsViewLabelButton setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 	[indexAdvancedOptionsView setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
-#endif
 	[indexTypeLabel setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 	[indexNameLabel setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
-#ifndef SP_CODA
-	[(NSView*)anchoredButtonBar setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
+	[anchoredButtonBar setAutoresizingMask:NSViewNotSizable | NSViewMinYMargin];
 
 	NSInteger newMinHeight = (windowMinHeigth - heightOffset + delta < windowMinHeigth) ? windowMinHeigth : windowMinHeigth - heightOffset + delta;
 
 	[[self window] setMinSize:NSMakeSize(windowMinWidth, newMinHeight)];
-#endif
 
-#ifndef SP_CODA
 	frame.origin.y += heightOffset;
 	frame.size.height -= heightOffset;
 
@@ -1060,39 +1086,33 @@ static const NSString *SPNewIndexKeyBlockSize   = @"IndexKeyBlockSize";
 	frame.size.height += heightOffset;
 
 	[[self window] setFrame:frame display:YES animate:YES];
-#endif
 
 	[indexTypePopUpButton setAutoresizingMask:popUpMask];
 	[indexNameTextField setAutoresizingMask:nameFieldMask];
 	[indexedColumnsScrollView setAutoresizingMask:scrollMask];
-#ifndef SP_CODA
 	[indexAdvancedOptionsViewButton setAutoresizingMask:buttonMask];
 	[indexAdvancedOptionsViewLabelButton setAutoresizingMask:textFieldMask];
 	[indexAdvancedOptionsView setAutoresizingMask:advancedViewMask];
-#endif
 	[indexTypeLabel setAutoresizingMask:typeLabelMask];
 	[indexNameLabel setAutoresizingMask:nameLabelMask];
-#ifndef SP_CODA
-	[(NSView*)anchoredButtonBar setAutoresizingMask:buttonBarMask];
-#endif
+	[anchoredButtonBar setAutoresizingMask:buttonBarMask];
 }
 
 #pragma mark -
 
 - (void)dealloc
 {
-	[table release], table = nil;
-	[indexes release], indexes = nil;
-	[fields release], fields = nil;
+	SPClear(table);
+	SPClear(indexes);
+	SPClear(fields);
 
-	[supportsLength release], supportsLength = nil;
-	[requiresLength release], requiresLength = nil;
+	SPClear(supportsLength);
+	SPClear(requiresLength);
 
-	if (indexedFields) [indexedFields release], indexedFields = nil;
+	if (indexedFields) SPClear(indexedFields);
 
-#ifndef SP_CODA
-	[prefs removeObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines];
-#endif
+	[prefs removeObserver:self forKeyPath:SPDisplayTableViewVerticalGridlines]; //TODO: update to ...context: variant after 10.6
+	[prefs removeObserver:self forKeyPath:SPUseMonospacedFonts]; //TODO: update to ...context: variant after 10.6
 
 	[super dealloc];
 }

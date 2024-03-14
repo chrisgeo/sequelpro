@@ -28,7 +28,7 @@
 //
 //  More info at <https://github.com/sequelpro/sequelpro>
 
-@class SPNavigatorOutlineView, SPSplitView;
+@class SPNavigatorOutlineView, SPSplitView, SPDatabaseDocument;
 
 @interface SPNavigatorController : NSWindowController 
 {
@@ -79,8 +79,8 @@
 - (void)reloadAfterFiltering;
 - (IBAction)syncButtonAction:(id)sender;
 
-- (void)updateEntriesForConnection:(id)object;
-- (NSString*)tableInfoLabelForIndex:(NSInteger)index ofType:(NSInteger)type;
+- (void)updateEntriesForConnection:(SPDatabaseDocument *)doc;
+- (NSString*)tableInfoLabelForIndex:(NSInteger)index ofType:(SPTableType)type;
 
 - (void)updateNavigator:(NSNotification *)aNotification;
 #endif

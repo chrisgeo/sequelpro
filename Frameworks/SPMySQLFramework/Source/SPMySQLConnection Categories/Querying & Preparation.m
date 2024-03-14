@@ -58,10 +58,12 @@
  * Take a string and escapes any special character for safe use within a query; correctly
  * escapes any characters within the string using the current connection encoding.
  * Allows control over whether to also wrap the string in single quotes.
+ *
+ * WARNING: This method may return nil if the current thread is cancelled!
+ *          You MUST check the isCancelled flag before using the result!
  */
 - (NSString *)escapeString:(NSString *)theString includingQuotes:(BOOL)includeQuotes
 {
-
 	// Return nil strings untouched
 	if (!theString) return theString;
 
@@ -72,10 +74,11 @@
 		}
 		return nil;
 	}
-	if (![self _checkConnectionIfNecessary]) return nil;
 
 	// Ensure per-thread variables are set up
 	[self _validateThreadSetup];
+
+	if (![self checkConnectionIfNecessary]) return nil;
 
 	// Perform a lossy conversion to bytes, using NSData to do the hard work.  Preserves
 	// nul characters correctly.
@@ -97,6 +100,7 @@
 	NSData *escapedData;
 	if (includeQuotes) {
 
+#warning This code assumes that the encoding cData is in is still ASCII-compatible which may not be the case (e.g. for UTF16, EBCDIC)
 		// Add quotes if requested
 		escBuffer[0] = '\'';
 		escBuffer[escapedLength+1] = '\'';
@@ -133,7 +137,6 @@
  */
 - (NSString *)escapeData:(NSData *)theData includingQuotes:(BOOL)includeQuotes
 {
-
 	// Return nil datas as nil strings
 	if (!theData) return nil;
 
@@ -221,6 +224,9 @@
  * the connection encoding.
  * The result type desired can be specified, supporting either standard or streaming
  * result sets.
+ *
+ * WARNING: This method may return nil if the current thread is cancelled!
+ *          You MUST check the isCancelled flag before using the result!
  */
 - (id)queryString:(NSString *)theQueryString usingEncoding:(NSStringEncoding)theEncoding withResultType:(SPMySQLResultType)theReturnType
 {
@@ -252,7 +258,7 @@
 	[self _validateThreadSetup];
 
 	// Check the connection if necessary, returning nil if the state couldn't be validated
-	if (![self _checkConnectionIfNecessary]) return nil;
+	if (![self checkConnectionIfNecessary]) return nil;
 
 	// Determine whether a maximum query size needs to be restored from a previous query
 	if (queryActionShouldRestoreMaxQuerySize != NSNotFound) {
@@ -264,16 +270,17 @@
 		[delegate willQueryString:theQueryString connection:self];
 	}
 
-	// Retrieve a C-style query string from the supplied NSString
-	NSUInteger cQueryStringLength;
-	const char *cQueryString = _cStringForStringWithEncoding(theQueryString, theEncoding, &cQueryStringLength);
+	// Retrieve a byte buffer from the supplied NSString
+	NSData *queryData = [theQueryString dataUsingEncoding:theEncoding allowLossyConversion:YES];
+	NSUInteger queryBytesLength = [queryData length];
+	const char *queryBytes = [queryData bytes];
 
 	// Check the query length against the current maximum query length.  If it is
 	// larger, the query would error (and probably cause a disconnect), so if
 	// the maximum size is editable, increase it and reconnect.
-	if (cQueryStringLength > maxQuerySize) {
+	if (queryBytesLength > maxQuerySize) {
 		queryActionShouldRestoreMaxQuerySize = maxQuerySize;
-		if (![self _attemptMaxQuerySizeIncreaseTo:(cQueryStringLength + 1024)]) {
+		if (![self _attemptMaxQuerySizeIncreaseTo:(queryBytesLength + 1024)]) {
 			queryActionShouldRestoreMaxQuerySize = NSNotFound;
 			return nil;
 		}
@@ -287,14 +294,20 @@
 	// Lock the connection while it's actively in use
 	[self _lockConnection];
 
-	while (queryAttemptsAllowed > 0) {
+	unsigned long long theAffectedRowCount;
+	do {
 
 		// While recording the overall execution time (including network lag!), run
 		// the raw query
 		uint64_t queryStartTime = mach_absolute_time();
-		queryStatus = mysql_real_query(mySQLConnection, cQueryString, cQueryStringLength);
+		queryStatus = mysql_real_query(mySQLConnection, queryBytes, queryBytesLength);
 		queryExecutionTime = _elapsedSecondsSinceAbsoluteTime(queryStartTime);
 		lastConnectionUsedTime = mach_absolute_time();
+		
+		// "An integer greater than zero indicates the number of rows affected or retrieved.
+		//  Zero indicates that no records were updated for an UPDATE statement, no rows matched the WHERE clause in the query or that no query has yet been executed.
+		//  -1 indicates that the query returned an error or that, for a SELECT query, mysql_affected_rows() was called prior to calling mysql_store_result()."
+		theAffectedRowCount = mysql_affected_rows(mySQLConnection);
 
 		// If the query succeeded, no need to re-attempt.
 		if (!queryStatus) {
@@ -309,10 +322,11 @@
 			// Store the error state
 			theErrorMessage = [self _stringForCString:mysql_error(mySQLConnection)];
 			theErrorID = mysql_errno(mySQLConnection);
-			theSqlstate = [self _stringForCString:mysql_sqlstate(mySQLConnection)];
+			// sqlstate is always an ASCII string, regardless of charset (but use latin1 anyway as that is less picky about invalid bytes)
+			theSqlstate = _stringForCStringWithEncoding(mysql_sqlstate(mySQLConnection), NSISOLatin1StringEncoding);
 
 			// Prevent retries if the query was cancelled or not a connection error
-			if (lastQueryWasCancelled || ![SPMySQLConnection isErrorIDConnectionError:mysql_errno(mySQLConnection)]) {
+			if (lastQueryWasCancelled || ![SPMySQLConnection isErrorIDConnectionError:theErrorID]) {
 				break;
 			}
 		}
@@ -326,12 +340,11 @@
 			return nil;
 		}
 		[self _lockConnection];
+		NSAssert(mySQLConnection != NULL, @"mySQLConnection has disappeared while checking it!");
 
-		queryAttemptsAllowed--;
-	}
+	} while (--queryAttemptsAllowed > 0);
 
-	unsigned long long theAffectedRowCount = mysql_affected_rows(mySQLConnection);
-	id theResult = nil;
+	SPMySQLResult *theResult = nil;
 
 	// On success, if there is a query result, retrieve the result data type
 	if (!queryStatus) {
@@ -369,7 +382,8 @@
 			// Update the error message, if appropriate, to reflect result store errors or overall success
 			theErrorMessage = [self _stringForCString:mysql_error(mySQLConnection)];
 			theErrorID = mysql_errno(mySQLConnection);
-			theSqlstate = [self _stringForCString:mysql_sqlstate(mySQLConnection)];
+			// sqlstate is always an ASCII string, regardless of charset (but use latin1 anyway as that is less picky about invalid bytes)
+			theSqlstate = _stringForCStringWithEncoding(mysql_sqlstate(mySQLConnection), NSISOLatin1StringEncoding);
 		} else {
 			theResult = [[SPMySQLEmptyResult alloc] init];
 		}
@@ -534,7 +548,6 @@
  */
 - (void)cancelCurrentQuery
 {
-
 	// If not connected, no action is required
 	if (state != SPMySQLConnected && state != SPMySQLDisconnecting) return;
 
@@ -641,7 +654,6 @@
  */
 - (void)_flushMultipleResultSets
 {
-
 	// Repeat as long as there are results
 	while (!mysql_next_result(mySQLConnection)) {
 		MYSQL_RES *eachResult = mysql_use_result(mySQLConnection);
@@ -659,6 +671,16 @@
 }
 
 /**
+ * Update lastErrorID, lastErrorMessage and lastSqlstate from connection
+ */
+- (void)_updateLastErrorInfos
+{
+	[self _updateLastErrorID:NSNotFound];
+	[self _updateLastErrorMessage:nil];
+	[self _updateLastSqlstate:nil];
+}
+
+/**
  * Update the MySQL error message for this connection.  If an error is supplied
  * it will be stored and returned to anything asking the instance for the last
  * error; if no error is supplied, the connection will be used to derive (or clear)
@@ -666,7 +688,6 @@
  */
 - (void)_updateLastErrorMessage:(NSString *)theErrorMessage
 {
-
 	// If an error message wasn't supplied, select one from the connection
 	if (!theErrorMessage) {
 		theErrorMessage = [self _stringForCString:mysql_error(mySQLConnection)];
@@ -689,7 +710,6 @@
  */
 - (void)_updateLastErrorID:(NSUInteger)theErrorID
 {
-
 	// If NSNotFound was supplied as the ID, ask the connection for the last error
 	if (theErrorID == NSNotFound) {
 		queryErrorID = mysql_errno(mySQLConnection);
@@ -712,7 +732,8 @@
 {
 	// If a SQLSTATE wasn't supplied, select one from the connection
 	if(!theSqlstate) {
-		theSqlstate = [self _stringForCString:mysql_sqlstate(mySQLConnection)];
+		// sqlstate is always an ASCII string, regardless of charset (but use latin1 anyway as that is less picky about invalid bytes)
+		theSqlstate = _stringForCStringWithEncoding(mysql_sqlstate(mySQLConnection), NSISOLatin1StringEncoding);
 	}
 
 	// Clear the last SQLSTATE stored on the instance

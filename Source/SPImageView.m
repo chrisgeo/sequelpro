@@ -39,14 +39,16 @@
  */
 - (BOOL)performDragOperation:(id <NSDraggingInfo>)sender
 {
-	id delegateForUse = nil;
+	id<SPImageViewDelegate> delegateForUse = nil;
 
 	// If the delegate or the delegate's content instance doesn't implement processUpdatedImageData:,
 	// return the super's implementation
 	if (delegate) {
 		if ([delegate respondsToSelector:@selector(processUpdatedImageData:)]) {
 			delegateForUse = delegate;
-		} else if ( [delegate valueForKey:@"tableContentInstance"]
+		}
+#warning Private ivar accessed from outside (#2978)
+		else if ( [delegate valueForKey:@"tableContentInstance"]
 					&& [[delegate valueForKey:@"tableContentInstance"] respondsToSelector:@selector(processUpdatedImageData:)] ) {
 			delegateForUse = [delegate valueForKey:@"tableContentInstance"];
 		}
@@ -72,7 +74,7 @@
 		NSData *pngData = nil;
 		NSBitmapImageRep *draggedImage = [[NSBitmapImageRep alloc] initWithData:[[sender draggingPasteboard] dataForType:@"NSTIFFPboardType"]];
 		if (draggedImage) {
-			pngData = [draggedImage representationUsingType:NSPNGFileType properties:nil];
+			pngData = [draggedImage representationUsingType:NSPNGFileType properties:@{}];
 			[draggedImage release];
 		}
 		if (pngData) {
@@ -91,7 +93,7 @@
 			[draggedImage drawInRect:[draggedImage boundingBox]];
 			NSBitmapImageRep *bitmapImageRep = [[NSBitmapImageRep alloc] initWithFocusedViewRect:[draggedImage boundingBox]];
 			if (bitmapImageRep) {
-				pngData = [bitmapImageRep representationUsingType:NSPNGFileType properties:nil];
+				pngData = [bitmapImageRep representationUsingType:NSPNGFileType properties:@{}];
 				[bitmapImageRep release];
 			}
 			[convertImage unlockFocus];
@@ -113,20 +115,23 @@
 - (void)paste:(id)sender
 {
 	// [super paste:sender];
-	id delegateForUse = nil;
+	id<SPImageViewDelegate> delegateForUse = nil;
 
 	// If the delegate or the delegate's content instance doesn't implement processUpdatedImageData:,
 	// return the super's implementation
 	if (delegate) {
 		if ([delegate respondsToSelector:@selector(processUpdatedImageData:)]) {
 			delegateForUse = delegate;
-		} else if ( [delegate valueForKey:@"tableContentInstance"]
+		}
+#warning Private ivar accessed from outside (#2978)
+		else if ( [delegate valueForKey:@"tableContentInstance"]
 					&& [[delegate valueForKey:@"tableContentInstance"] respondsToSelector:@selector(processUpdatedImageData:)] ) {
 			delegateForUse = [delegate valueForKey:@"tableContentInstance"];
 		}
 	}
-	if (delegateForUse)
+	if (delegateForUse) {
 		[delegateForUse processPasteImageData];
+	}
 }
 
 @end

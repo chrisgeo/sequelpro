@@ -40,6 +40,7 @@ NSString *SPDefaultMonospacedFontName            = @"Monaco";
 NSString *SPMySQLDatabase                        = @"mysql";
 NSString *SPMySQLInformationSchemaDatabase       = @"information_schema";
 NSString *SPMySQLPerformanceSchemaDatabase       = @"performance_schema";
+NSString *SPMySQLSysDatabase                     = @"sys";
 
 // Table view drag types
 NSString *SPDefaultPasteboardDragType            = @"SequelProPasteboard";
@@ -47,6 +48,7 @@ NSString *SPFavoritesPasteboardDragType          = @"SPFavoritesPasteboard";
 NSString *SPContentFilterPasteboardDragType      = @"SPContentFilterPasteboard";
 NSString *SPNavigatorPasteboardDragType          = @"SPNavigatorPasteboardDragType";
 NSString *SPNavigatorTableDataPasteboardDragType = @"SPNavigatorTableDataPasteboardDragType"; 
+NSString *SPExportCustomFileNameTokenPlistType   = @"SPExportCustomFileNameTokenPlist";
 
 // File extensions
 NSString *SPFileExtensionDefault                 = @"spf";
@@ -55,11 +57,18 @@ NSString *SPFileExtensionSQL                     = @"sql";
 NSString *SPColorThemeFileExtension              = @"spTheme";
 NSString *SPUserBundleFileExtension              = @"spBundle";
 
+// SPF File types
+NSString *SPFExportSettingsContentType           = @"export settings";
+NSString *SPFContentFiltersContentType           = @"content filters";
+NSString *SPFQueryFavoritesContentType           = @"query favorites";
+NSString *SPFConnectionContentType               = @"connection";
+
 // File names
 NSString *SPFavoritesDataFile                    = @"Favorites.plist";
 NSString *SPHTMLPrintTemplate                    = @"SPPrintTemplate";
 NSString *SPHTMLTableInfoPrintTemplate           = @"SPTableInfoPrintTemplate";
 NSString *SPHTMLHelpTemplate                     = @"SPMySQLHelpTemplate";
+NSString *SPPreferenceDefaultsFile               = @"PreferenceDefaults";
 
 // Folder names
 NSString *SPThemesSupportFolder                  = @"Themes";
@@ -92,15 +101,9 @@ NSString *SPLoadBlobsAsNeeded                    = @"LoadBlobsAsNeeded";
 NSString *SPTableRowCountQueryLevel              = @"TableRowCountQueryLevel";
 NSString *SPTableRowCountCheapSizeBoundary       = @"TableRowCountCheapLookupSizeBoundary";
 NSString *SPNewFieldsAllowNulls                  = @"NewFieldsAllowNulls";
-#ifndef SP_CODA
 NSString *SPLimitResults                         = @"LimitResults";
 NSString *SPLimitResultsValue                    = @"LimitResultsValue";
 NSString *SPNullValue                            = @"NullValue";
-#else
-NSString *SPLimitResults                         = @"SPLimitResults";
-NSString *SPLimitResultsValue                    = @"SPLimitResultsValue";
-NSString *SPNullValue                            = @"SPNullValue";
-#endif
 NSString *SPGlobalResultTableFont                = @"GlobalResultTableFont";
 NSString *SPFilterTableDefaultOperator           = @"FilterTableDefaultOperator";
 NSString *SPFilterTableDefaultOperatorLastItems  = @"FilterTableDefaultOperatorLastItems";
@@ -118,15 +121,9 @@ NSString *SPConsoleEnableImportExportLogging     = @"ConsoleEnableImportExportLo
 NSString *SPConsoleEnableErrorLogging            = @"ConsoleEnableErrorLogging";
 
 // Network Prefpane
-#ifndef SP_CODA
 NSString *SPConnectionTimeoutValue               = @"ConnectionTimeoutValue";
 NSString *SPUseKeepAlive                         = @"UseKeepAlive";
 NSString *SPKeepAliveInterval                    = @"KeepAliveInterval";
-#else
-NSString *SPConnectionTimeoutValue               = @"SPConnectionTimeoutValue";
-NSString *SPUseKeepAlive                         = @"SPUseKeepAlive";
-NSString *SPKeepAliveInterval                    = @"SPKeepAliveInterval";
-#endif
 
 // Editor Prefpane
 NSString *SPCustomQueryEditorFont                = @"CustomQueryEditorFont";
@@ -148,6 +145,7 @@ NSString *SPCustomQueryUpdateAutoHelp            = @"CustomQueryUpdateAutoHelp";
 NSString *SPCustomQueryAutoHelpDelay             = @"CustomQueryAutoHelpDelay";
 NSString *SPCustomQueryHighlightCurrentQuery     = @"CustomQueryHighlightCurrentQuery";
 NSString *SPCustomQueryEditorTabStopWidth        = @"CustomQueryEditorTabStopWidth";
+NSString *SPCustomQueryEditorCompleteWithBackticks = @"SPCustomQueryEditorCompleteWithBackticks";
 NSString *SPCustomQueryAutoComplete              = @"CustomQueryAutoComplete";
 NSString *SPCustomQueryAutoCompleteDelay         = @"CustomQueryAutoCompleteDelay";
 NSString *SPCustomQueryFunctionCompletionInsertsArguments = @"CustomQueryFunctionCompletionInsertsArguments";
@@ -163,6 +161,7 @@ NSString *SPConsoleShowHelps                     = @"ConsoleShowHelps";
 NSString *SPConsoleShowSelectsAndShows           = @"ConsoleShowSelectsAndShows";
 NSString *SPConsoleShowTimestamps                = @"ConsoleShowTimestamps";
 NSString *SPConsoleShowConnections               = @"ConsoleShowConnections";
+NSString *SPConsoleShowDatabases                 = @"ConsoleShowDatabases";
 NSString *SPEditInSheetEnabled                   = @"EditInSheetEnabled";
 NSString *SPTableInformationPanelCollapsed       = @"TableInformationPanelCollapsed";
 NSString *SPTableColumnWidths                    = @"tableColumnWidths";
@@ -178,6 +177,7 @@ NSString *SPResetAutoIncrementAfterDeletionOfAllRows = @"ResetAutoIncrementAfter
 NSString *SPFavoriteColorList                    = @"FavoriteColorList";
 NSString *SPDisplayBinaryDataAsHex               = @"DisplayBinaryDataAsHex";
 NSString *SPMonospacedFontSize                   = @"MonospacedFontSize";
+NSString *SPRuleFilterEditorLastVisibilityChoice = @"RuleFilterEditorLastVisibilityChoice";
 
 // Hidden Prefs
 NSString *SPPrintWarningRowLimit                 = @"PrintWarningRowLimit";
@@ -193,10 +193,19 @@ NSString *SPCSVImportFirstLineIsHeader           = @"CSVImportFirstLineIsHeader"
 NSString *SPCSVImportLineTerminator              = @"CSVImportLineTerminator";
 NSString *SPCSVFieldImportMappingAlignment       = @"CSVFieldImportMappingAlignment";
 NSString *SPImportClipboardTempFileNamePrefix    = @"/tmp/_SP_ClipBoard_Import_File_";
-NSString *SPSQLExportUseCompression              = @"SQLExportUseCompression";
-NSString *SPNoBOMforSQLdumpFile                  = @"NoBOMforSQLdumpFile";
-NSString *SPExportLastDirectory                  = @"SPExportLastDirectory";
-NSString *SPExportFilenameFormat                 = @"SPExportFilenameFormat";
+NSString *SPLastExportSettings                   = @"LastExportSettings";
+
+// Export filename tokens
+NSString *SPFileNameDatabaseTokenName            = @"database";
+NSString *SPFileNameHostTokenName                = @"host";
+NSString *SPFileNameDateTokenName                = @"date";
+NSString *SPFileNameYearTokenName                = @"year";
+NSString *SPFileNameMonthTokenName               = @"month";
+NSString *SPFileNameDayTokenName                 = @"day";
+NSString *SPFileNameTimeTokenName                = @"time";
+NSString *SPFileName24HourTimeTokenName          = @"time24";
+NSString *SPFileNameFavoriteTokenName            = @"favorite";
+NSString *SPFileNameTableTokenName               = @"table";
 
 // Misc 
 NSString *SPContentFilters                       = @"ContentFilters";
@@ -227,11 +236,17 @@ NSString *SPHiddenKeyFileVisibilityKey           = @"KeySelectionHiddenFilesVisi
 NSString *SPSelectionDetailTypeIndexed           = @"SelectionDetailTypeNSIndexSet";
 NSString *SPSelectionDetailTypePrimaryKeyed      = @"SelectionDetailTypePrimaryKeyedDetails";
 NSString *SPSSHEnableMuxingPreference            = @"SSHMultiplexingEnabled";
+NSString *SPSSHClientPath                        = @"SSHClientPath";
+NSString *SPSSLCipherListKey                     = @"SSLCipherList";
+NSString *SPQueryFavoritesHaveBeenUpdatedNotification = @"QueryFavoritesHaveBeenUpdatedNotification";
+NSString *SPHistoryItemsHaveBeenUpdatedNotification   = @"HistoryItemsHaveBeenUpdatedNotification";
+NSString *SPContentFiltersHaveBeenUpdatedNotification = @"ContentFiltersHaveBeenUpdatedNotification";
+NSString *SPCopyContentOnTableCopy                    = @"CopyContentOnTableCopy";
 
 // URLs
-NSString *SPDonationsURL                         = @"http://www.sequelpro.com/donate/";
-NSString *SPMySQLSearchURL                       = @"http://dev.mysql.com/doc/refman/%@/%@/%@.html";
-NSString *SPDevURL                               = @"http://code.google.com/p/sequel-pro/";
+NSString *SPDonationsURL                         = @"https://www.sequelpro.com/donate/";
+NSString *SPMySQLSearchURL                       = @"https://dev.mysql.com/doc/refman/%@/%@/%@.html";
+NSString *SPDevURL                               = @"https://github.com/sequelpro/sequelpro";
 
 // Toolbar constants
 
@@ -295,7 +310,11 @@ NSString *SPFavoriteSSLCertificateFileLocationEnabledKey = @"sslCertificateFileL
 NSString *SPFavoriteSSLCertificateFileLocationKey        = @"sslCertificateFileLocation";
 NSString *SPFavoriteSSLCACertFileLocationEnabledKey      = @"sslCACertFileLocationEnabled";
 NSString *SPFavoriteSSLCACertFileLocationKey             = @"sslCACertFileLocation";
+NSString *SPFavoriteUseCompressionKey                    = @"useCompression";
 NSString *SPConnectionFavoritesChangedNotification       = @"SPConnectionFavoritesChanged";
+
+NSString *SPFFormatKey = @"format";
+NSString *SPFVersionKey = @"version";
 
 // Favorites import/export
 NSString *SPFavoritesDataRootKey                            = @"SPConnectionFavorites";
@@ -410,18 +429,20 @@ NSString *SPBundleShellVariableSelectedText                 = @"SP_SELECTED_TEXT
 NSString *SPBundleShellVariableSelectedTextRange            = @"SP_SELECTED_TEXT_RANGE";
 NSString *SPBundleShellVariableUsedQueryForTable            = @"SP_USED_QUERY_FOR_TABLE";
 
-const NSInteger SPBundleRedirectActionNone                 = 200;
-const NSInteger SPBundleRedirectActionReplaceSection       = 201;
-const NSInteger SPBundleRedirectActionReplaceContent       = 202;
-const NSInteger SPBundleRedirectActionInsertAsText         = 203;
-const NSInteger SPBundleRedirectActionInsertAsSnippet      = 204;
-const NSInteger SPBundleRedirectActionShowAsHTML           = 205;
-const NSInteger SPBundleRedirectActionShowAsTextTooltip    = 207;
-const NSInteger SPBundleRedirectActionShowAsHTMLTooltip    = 208;
-const NSInteger SPBundleRedirectActionLastCode             = 208;
+#define OWS @"\\s*" /* optional whitespace */
+//                                                    CURRENT_TIMESTAMP    [            (           [n]          )    ]
+NSString *SPCurrentTimestampPattern = (@"(?i)^" OWS @"CURRENT_TIMESTAMP" @"(?:" OWS @"\\(" OWS @"(\\d*)" OWS @"\\)" @")?" OWS @"$");
+#undef OWS
 
 // URL scheme
 NSString *SPURLSchemeQueryInputPathHeader          = @"/tmp/SP_QUERY_";
 NSString *SPURLSchemeQueryResultPathHeader         = @"/tmp/SP_QUERY_RESULT_";
 NSString *SPURLSchemeQueryResultStatusPathHeader   = @"/tmp/SP_QUERY_RESULT_STATUS_";
 NSString *SPURLSchemeQueryResultMetaPathHeader     = @"/tmp/SP_QUERY_META_";
+
+NSString *SPCommonCryptoExceptionName = @"SPCommonCryptoException";
+NSString *SPErrorDomain = @"SPErrorDomain";
+
+void inline _SPClear(id *addr) {
+	[*addr release], *addr = nil;
+}

@@ -32,6 +32,8 @@
 @class SPMySQLConnection;
 @class SPSplitView;
 @class SPDatabaseDocument;
+@class SPUserMO;
+@class SPPrivilegesMO;
 
 @interface SPUserManager : NSWindowController
 {	
@@ -78,6 +80,9 @@
 	BOOL isSaving;
 	BOOL isInitializing;
 	NSMutableString *errorsString;
+	
+	// MySQL 5.7.6 removes the "Password" columns and only uses the "plugin" + "authentication_string" columns
+	BOOL requiresPost576PasswordHandling;
 }
 
 @property (nonatomic, retain) SPMySQLConnection *connection;
@@ -92,6 +97,7 @@
 @property (nonatomic, retain) NSMutableArray *schemas;
 @property (nonatomic, retain) NSMutableArray *grantedSchemaPrivs;
 @property (nonatomic, retain) NSMutableArray *availablePrivs;
+@property (nonatomic, readonly) BOOL isInitializing;
 
 // Add/Remove users
 - (IBAction)addUser:(id)sender;
@@ -108,20 +114,29 @@
 - (IBAction)closeErrorsSheet:(id)sender;
 - (IBAction)doubleClickSchemaPriv:(id)sender;
 
-// Schema Privieges
+// Schema privieges
 - (IBAction)addSchemaPriv:(id)sender;
 - (IBAction)removeSchemaPriv:(id)sender;
 
 // Refresh
 - (IBAction)refresh:(id)sender;
 
-// Core Data notifications
-- (void)contextDidSave:(NSNotification *)notification;
-- (BOOL)insertUsers:(NSArray *)insertedUsers;
-- (BOOL)deleteUsers:(NSArray *)deletedUsers;
-- (BOOL)updateUsers:(NSArray *)updatedUsers;
-- (BOOL)updateResourcesForUser:(NSManagedObject *)user;
-- (BOOL)grantPrivilegesToUser:(NSManagedObject *)user;
-- (BOOL)grantDbPrivilegesWithPrivilege:(NSManagedObject *)user;
+// Core data notifications
+- (BOOL)insertUser:(SPUserMO *)user;
+- (BOOL)deleteUser:(SPUserMO *)user;
+- (BOOL)updateUser:(SPUserMO *)user;
+- (BOOL)updateResourcesForUser:(SPUserMO *)user;
+- (BOOL)grantPrivilegesToUser:(SPUserMO *)user;
+- (BOOL)grantPrivilegesToUser:(SPUserMO *)user skippingRevoke:(BOOL)skipRevoke;
+- (BOOL)grantDbPrivilegesWithPrivilege:(SPPrivilegesMO *)user;
+- (BOOL)grantDbPrivilegesWithPrivilege:(SPPrivilegesMO *)user skippingRevoke:(BOOL)skipRevoke;
+
+// External
+/**
+ * Display the user manager as a sheet attached to a chosen window
+ * @param docWindow The parent window.
+ * @param callback  A callback that will be called once the window is closed again. Can be NULL.
+ */
+- (void)beginSheetModalForWindow:(NSWindow *)docWindow completionHandler:(void (^)())callback;
 
 @end

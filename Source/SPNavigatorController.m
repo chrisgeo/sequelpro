@@ -39,7 +39,6 @@
 #import "SPLogger.h"
 #import "SPTooltip.h"
 #import "SPAppController.h"
-#import "SPDatabaseViewController.h"
 #import "SPDatabaseStructure.h"
 #import "SPThreadAdditions.h"
 
@@ -48,6 +47,10 @@
 #endif
 
 static SPNavigatorController *sharedNavigatorController = nil;
+
+@interface SPNavigatorController () <NSOutlineViewDataSource, NSOutlineViewDelegate>
+
+@end
 
 @implementation SPNavigatorController
 
@@ -109,21 +112,21 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 - (void)dealloc
 {
 	[[NSNotificationCenter defaultCenter] removeObserver:self];
-	if(schemaDataFiltered) [schemaDataFiltered release];
-	if(allSchemaKeys) [allSchemaKeys release];
-	if(schemaData) [schemaData release];
-	if(infoArray)  [infoArray release];
-	if(updatingConnections)  [updatingConnections release];
-	if(expandStatus2) [expandStatus2 release];
-	if(cachedSortedKeys) [cachedSortedKeys release];
+	if(schemaDataFiltered)  SPClear(schemaDataFiltered);
+	if(allSchemaKeys)       SPClear(allSchemaKeys);
+	if(schemaData)          SPClear(schemaData);
+	if(infoArray)           SPClear(infoArray);
+	if(updatingConnections) SPClear(updatingConnections);
+	if(expandStatus2)       SPClear(expandStatus2);
+	if(cachedSortedKeys)    SPClear(cachedSortedKeys);
 #ifndef SP_CODA /* dealloc ivars */
-	[connectionIcon release];
-	[databaseIcon release];
-	[tableIcon release];
-	[viewIcon release];
-	[procedureIcon release];
-	[functionIcon release];
-	[fieldIcon release];
+	SPClear(connectionIcon);
+	SPClear(databaseIcon);
+	SPClear(tableIcon);
+	SPClear(viewIcon);
+	SPClear(procedureIcon);
+	SPClear(functionIcon);
+	SPClear(fieldIcon);
 #endif
 
 	[super dealloc];
@@ -155,7 +158,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 	[schemaStatusSplitView setMinSize:16.f ofSubviewAtIndex:1];
 
 	[self setWindowFrameAutosaveName:@"SPNavigator"];
-	[outlineSchema2 registerForDraggedTypes:[NSArray arrayWithObjects:SPNavigatorTableDataPasteboardDragType, SPNavigatorPasteboardDragType, NSStringPboardType, nil]];
+	[outlineSchema2 registerForDraggedTypes:@[SPNavigatorTableDataPasteboardDragType, SPNavigatorPasteboardDragType, NSStringPboardType]];
 	[outlineSchema2 setDraggingSourceOperationMask:NSDragOperationEvery forLocal:YES];
 	[outlineSchema2 setDraggingSourceOperationMask:NSDragOperationEvery forLocal:NO];
 
@@ -167,8 +170,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 	functionIcon = [[NSImage imageNamed:@"func-small"] retain];
 	fieldIcon = [[NSImage imageNamed:@"field-small-square"] retain];
 
-	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateNavigator:)
-												 name:@"SPDBStructureWasUpdated" object:nil];
+	[[NSNotificationCenter defaultCenter] addObserver:self selector:@selector(updateNavigator:) name:@"SPDBStructureWasUpdated" object:nil];
 
 }
 
@@ -312,8 +314,8 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 		// Detect if more than one connection windows with the connectionID are open.
 		// If so, don't remove it.
-		if ([[NSApp delegate] frontDocument]) {
-			for(id doc in [[NSApp delegate] orderedDocuments]) {
+		if ([SPAppDelegate frontDocument]) {
+			for(id doc in [SPAppDelegate orderedDocuments]) {
 				if([[doc connectionID] isEqualToString:connectionID])
 					docCounter++;
 				if(docCounter > 1) break;
@@ -322,7 +324,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 		if(docCounter > 1) return;
 
-		if(schemaData && [schemaData objectForKey:connectionID] && [[NSApp delegate] frontDocument] && [[[NSApp delegate] orderedDocuments] count])
+		if(schemaData && [schemaData objectForKey:connectionID] && [SPAppDelegate frontDocument] && [[SPAppDelegate orderedDocuments] count])
 			[self saveSelectedItems];
 
 		if(schemaDataFiltered)
@@ -374,7 +376,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 		NSArray *pathArray = [[[parentKeys objectAtIndex:0] description] componentsSeparatedByString:SPUniqueSchemaDelimiter];
 		if([pathArray count] > 1) {
 
-			SPDatabaseDocument *doc = [[NSApp delegate] frontDocument];
+			SPDatabaseDocument *doc = [SPAppDelegate frontDocument];
 			if([doc isWorking]) {
 				[SPTooltip showWithObject:NSLocalizedString(@"Active connection window is busy. Please wait and try again.", @"active connection window is busy. please wait and try again. tooltip") 
 						atLocation:pos 
@@ -407,16 +409,12 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 - (void)updateNavigator:(NSNotification *)aNotification
 {
+	SPDatabaseDocument *object = [(SPDatabaseStructure *)[aNotification object] delegate];
 
-	id object = [aNotification object];
-
-	if([object isKindOfClass:[SPDatabaseDocument class]])
-		[self performSelectorOnMainThread:@selector(updateEntriesForConnection:) withObject:object waitUntilDone:NO];
-	else
-		[self performSelectorOnMainThread:@selector(updateEntriesForConnection:) withObject:nil waitUntilDone:NO];
+	[self performSelectorOnMainThread:@selector(updateEntriesForConnection:) withObject:object waitUntilDone:NO];
 }
 
-- (void)updateEntriesForConnection:(id)doc
+- (void)updateEntriesForConnection:(SPDatabaseDocument *)doc
 {
 
 	if(ignoreUpdate) {
@@ -430,8 +428,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 		[cachedSortedKeys removeAllObjects];
 	}
 
-
-	if (doc && [doc isKindOfClass:[SPDatabaseDocument class]]) {
+	if (doc) {
 
 		SPMySQLConnection *theConnection = [doc getConnection];
 		if(!theConnection || ![theConnection isConnected]) return;
@@ -466,8 +463,8 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 			if(a)
 				[allSchemaKeys setObject:a forKey:connectionName];
 		} else {
-			[schemaData setObject:[NSDictionary dictionary] forKey:[NSString stringWithFormat:@"%@&DEL&no data loaded yet", connectionName]];
-			[allSchemaKeys setObject:[NSArray array] forKey:connectionName];
+			[schemaData setObject:@{} forKey:[NSString stringWithFormat:@"%@&DEL&no data loaded yet", connectionName]];
+			[allSchemaKeys setObject:@[] forKey:connectionName];
 		}
 
 		[updatingConnections removeObject:connectionName];
@@ -487,7 +484,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 	if(isFiltered && [[self window] isVisible])
 		[self filterTree:self];
 
-	[[NSNotificationCenter defaultCenter] postNotificationName:@"SPNavigatorStructureWasUpdated" object:doc];
+	[[NSNotificationCenter defaultCenter] postNotificationName:@"SPNavigatorStructureWasUpdated" object:self];
 
 }
 
@@ -547,12 +544,12 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 		}
 	}
 
-	if([result count] < 1 ) return [NSArray arrayWithObjects:[NSNumber numberWithInt:0], @"", nil];
+	if([result count] < 1 ) return @[@0, @""];
 	if([result count] == 1) {
 		NSArray *split = [[result objectAtIndex:0] componentsSeparatedByString:SPUniqueSchemaDelimiter];
-		if([split count] == 2 ) return [NSArray arrayWithObjects:[NSNumber numberWithInt:1], [split lastObject], nil];
-		if([split count] == 3 ) return [NSArray arrayWithObjects:[NSNumber numberWithInt:2], [split lastObject], nil];
-		return [NSArray arrayWithObjects:[NSNumber numberWithInt:0], @"", nil];
+		if([split count] == 2 ) return [NSArray arrayWithObjects:@1, [split lastObject], nil];
+		if([split count] == 3 ) return [NSArray arrayWithObjects:@2, [split lastObject], nil];
+		return @[@0, @""];
 	}
 	// case if field is equal to a table or db name
 	NSMutableArray *arr = [NSMutableArray array];
@@ -560,14 +557,13 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 		if([[item componentsSeparatedByString:SPUniqueSchemaDelimiter] count] < 4)
 			[arr addObject:item];
 	}
-	if([arr count] < 1 ) [NSArray arrayWithObjects:[NSNumber numberWithInt:0], @"", nil];
 	if([arr count] == 1) {
 		NSArray *split = [[arr objectAtIndex:0] componentsSeparatedByString:SPUniqueSchemaDelimiter];
-		if([split count] == 2 ) [NSArray arrayWithObjects:[NSNumber numberWithInt:1], [split lastObject], nil];
-		if([split count] == 3 ) [NSArray arrayWithObjects:[NSNumber numberWithInt:2], [split lastObject], nil];
-		return [NSArray arrayWithObjects:[NSNumber numberWithInt:0], @"", nil];
+		if([split count] == 2 ) [NSArray arrayWithObjects:@1, [split lastObject], nil];
+		if([split count] == 3 ) [NSArray arrayWithObjects:@2, [split lastObject], nil];
+		return @[@0, @""];
 	}
-	return [NSArray arrayWithObjects:[NSNumber numberWithInt:0], @"", nil];
+	return @[@0, @""];
 }
 
 #ifndef SP_CODA
@@ -590,7 +586,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 {
 
 	// Reset everything for current active doc connection
-	SPDatabaseDocument *doc = [[NSApp delegate] frontDocument];
+	SPDatabaseDocument *doc = [SPAppDelegate frontDocument];
 	if(!doc) return;
 	NSString *connectionID = [doc connectionID];
 	if(!connectionID || [connectionID length] < 2) return;
@@ -611,7 +607,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 	if (![[doc getConnection] isConnected]) return;
 
-	[NSThread detachNewThreadWithName:@"SPNavigatorController database structure querier" target:[doc databaseStructureRetrieval] selector:@selector(queryDbStructureWithUserInfo:) object:[NSDictionary dictionaryWithObjectsAndKeys:[NSNumber numberWithBool:YES], @"forceUpdate", nil]];
+	[[doc databaseStructureRetrieval] queryDbStructureInBackgroundWithUserInfo:@{@"forceUpdate" : @YES}];
 }
 
 - (IBAction)outlineViewAction:(id)sender
@@ -689,12 +685,9 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 					[[[structure valueForKey:connectionID] valueForKey:db_id] setObject:[NSMutableDictionary dictionary] forKey:table_id];
 				}
 
-				if([[[[schemaData objectForKey:connectionID] objectForKey:db_id] objectForKey:table_id] objectForKey:@"  struct_type  "])
-					[[[[structure valueForKey:connectionID] valueForKey:db_id] valueForKey:table_id] setObject:
-						[[[[schemaData objectForKey:connectionID] objectForKey:db_id] objectForKey:table_id] objectForKey:@"  struct_type  "] forKey:@"  struct_type  "];
-				else
-					[[[[structure valueForKey:connectionID] valueForKey:db_id] valueForKey:table_id] setObject:
-						[NSNumber numberWithInt:0] forKey:@"  struct_type  "];
+				id srcType = [[[[schemaData objectForKey:connectionID] objectForKey:db_id] objectForKey:table_id] objectForKey:@"  struct_type  "];
+				NSMutableDictionary *targetDict = [[[structure valueForKey:connectionID] valueForKey:db_id] valueForKey:table_id];
+				[targetDict setObject:(srcType ? srcType : @(SPTableTypeTable)) forKey:@"  struct_type  "];
 
 				if([a count] > 3) {
 					NSString *field_id = [NSString stringWithFormat:@"%@%@%@", table_id,SPUniqueSchemaDelimiter,[a objectAtIndex:3]];
@@ -728,12 +721,12 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 - (void)reloadAfterFiltering
 {
-	NSAutoreleasePool *pool = [[NSAutoreleasePool alloc] init];
-	isFiltering = YES;
-	[outlineSchema2 reloadData];
-	[outlineSchema2 expandItem:[outlineSchema2 itemAtRow:0] expandChildren:YES];
-	isFiltering = NO;
-	[pool release];
+	@autoreleasepool {
+		isFiltering = YES;
+		[outlineSchema2 reloadData];
+		[outlineSchema2 expandItem:[outlineSchema2 itemAtRow:0] expandChildren:YES];
+		isFiltering = NO;
+	}
 }
 
 - (IBAction)syncButtonAction:(id)sender
@@ -750,7 +743,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 			[searchField setStringValue:@""];
 		}
 
-		SPDatabaseDocument *doc = [[NSApp delegate] frontDocument];
+		SPDatabaseDocument *doc = [SPAppDelegate frontDocument];
 		if (doc) {
 			NSMutableString *key = [NSMutableString string];
 			[key setString:[doc connectionID]];
@@ -868,7 +861,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 {
 	if([item isKindOfClass:NSDictionaryClass]) {
 		// Suppress expanding for PROCEDUREs and FUNCTIONs
-		if([[item objectForKey:@"  struct_type  "] intValue] > 1) {
+		if((SPTableType)[[item objectForKey:@"  struct_type  "] intValue] > SPTableTypeView) {
 			return NO;
 		}
 		return YES;
@@ -928,20 +921,23 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 
 		if ([parentObject isKindOfClass:NSDictionaryClass]) {
 			if([item isKindOfClass:NSDictionaryClass]) {
-				if([item objectForKey:@"  struct_type  "]) {
-					switch([[item objectForKey:@"  struct_type  "] intValue]) {
-						case 0:
-						[[tableColumn dataCell] setImage:tableIcon];
-						break;
-						case 1:
-						[[tableColumn dataCell] setImage:viewIcon];
-						break;
-						case 2:
-						[[tableColumn dataCell] setImage:procedureIcon];
-						break;
-						case 3:
-						[[tableColumn dataCell] setImage:functionIcon];
-						break;
+				NSNumber *type = [item objectForKey:@"  struct_type  "];
+				if(type) {
+					switch((SPTableType)[type intValue]) {
+						case SPTableTypeTable:
+							[[tableColumn dataCell] setImage:tableIcon];
+							break;
+						case SPTableTypeView:
+							[[tableColumn dataCell] setImage:viewIcon];
+							break;
+						case SPTableTypeProc:
+							[[tableColumn dataCell] setImage:procedureIcon];
+							break;
+						case SPTableTypeFunc:
+							[[tableColumn dataCell] setImage:functionIcon];
+							break;
+						default:
+							break;
 					}
 				} else {
 					[[tableColumn dataCell] setImage:databaseIcon];
@@ -1074,15 +1070,15 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 				NSString *item = NSArrayObjectAtIndex(selectedItem, i);
 				if([item isNSNull] || ![item length]) continue;
 				[infoArray addObject:[NSString stringWithFormat:@"%@: %@", 
-					[self tableInfoLabelForIndex:i ofType:0], 
+					[self tableInfoLabelForIndex:i ofType:SPTableTypeTable],
 					[item stringByReplacingOccurrencesOfString:@"," withString:@", "]]];
 			}
 		}
 
 		// check if selected item is a PROCEDURE or FUNCTION
-		else if([selectedItem isKindOfClass:NSDictionaryClass] && [selectedItem objectForKey:@"  struct_type  "] && [[selectedItem objectForKey:@"  struct_type  "] intValue] > 1) {
+		else if([selectedItem isKindOfClass:NSDictionaryClass] && [selectedItem objectForKey:@"  struct_type  "] && (SPTableType)[[selectedItem objectForKey:@"  struct_type  "] intValue] > SPTableTypeView) {
 			NSInteger i = 0;
-			NSInteger type = [[selectedItem objectForKey:@"  struct_type  "] intValue];
+			SPTableType type = (SPTableType)[[selectedItem objectForKey:@"  struct_type  "] intValue];
 			NSArray *keys = [selectedItem allKeys];
 			NSInteger keyIndex = 0;
 			if(keys && [keys count] == 2) {
@@ -1113,7 +1109,7 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 - (BOOL)outlineView:(NSOutlineView *)outlineView writeItems:(NSArray *)items toPasteboard:(NSPasteboard *)pboard
 {
 	// Provide data for our custom type, and simple NSStrings.
-	[pboard declareTypes:[NSArray arrayWithObjects:SPNavigatorTableDataPasteboardDragType, SPNavigatorPasteboardDragType, NSStringPboardType, nil] owner:self];
+	[pboard declareTypes:@[SPNavigatorTableDataPasteboardDragType, SPNavigatorPasteboardDragType, NSStringPboardType] owner:self];
 
 	// Collect the actual schema paths without leading connection ID
 	NSMutableArray *draggedItems = [NSMutableArray array];
@@ -1220,57 +1216,58 @@ static NSComparisonResult compareStrings(NSString *s1, NSString *s2, void* conte
 #pragma mark -
 #pragma mark others
 
-- (NSString*)tableInfoLabelForIndex:(NSInteger)anIndex ofType:(NSInteger)type
+- (NSString*)tableInfoLabelForIndex:(NSInteger)anIndex ofType:(SPTableType)type
 {
-
-	if(type == 0 || type == 1) // TABLE / VIEW
-		switch(anIndex) {
+	if(type == SPTableTypeTable || type == SPTableTypeView) {
+		switch (anIndex) {
 			case 0:
-			return NSLocalizedString(@"Type", @"type label (Navigator)");
+				return NSLocalizedString(@"Type", @"type label (Navigator)");
 			case 1:
-			return NSLocalizedString(@"Default", @"default label");
+				return NSLocalizedString(@"Default", @"default label");
 			case 2:
-			return NSLocalizedString(@"Is Nullable", @"is nullable label (Navigator)");
+				return NSLocalizedString(@"Is Nullable", @"is nullable label (Navigator)");
 			case 3:
-			return NSLocalizedString(@"Encoding", @"encoding label (Navigator)");
+				return NSLocalizedString(@"Encoding", @"encoding label (Navigator)");
 			case 4:
-			return NSLocalizedString(@"Collation", @"collation label (Navigator)");
+				return NSLocalizedString(@"Collation", @"collation label (Navigator)");
 			case 5:
-			return NSLocalizedString(@"Key", @"key label (Navigator)");
+				return NSLocalizedString(@"Key", @"key label (Navigator)");
 			case 6:
-			return NSLocalizedString(@"Extra", @"extra label (Navigator)");
+				return NSLocalizedString(@"Extra", @"extra label (Navigator)");
 			case 7:
-			return NSLocalizedString(@"Privileges", @"privileges label (Navigator)");
+				return NSLocalizedString(@"Privileges", @"privileges label (Navigator)");
 			case 8:
-			return NSLocalizedString(@"Comment", @"comment label");
+				return NSLocalizedString(@"Comment", @"comment label");
 		}
-
-	if(type == 2) // PROCEDURE
-		switch(anIndex) {
+	}
+	else if(type == SPTableTypeProc) {
+		switch (anIndex) {
 			case 0:
-			return NSLocalizedString(@"DTD Identifier",@"dtd identifier label (Navigator)");
+				return NSLocalizedString(@"DTD Identifier", @"dtd identifier label (Navigator)");
 			case 1:
-			return NSLocalizedString(@"SQL Data Access",@"sql data access label (Navigator)");
+				return NSLocalizedString(@"SQL Data Access", @"sql data access label (Navigator)");
 			case 2:
-			return NSLocalizedString(@"Is Deterministic",@"is deterministic label (Navigator)");
+				return NSLocalizedString(@"Is Deterministic", @"is deterministic label (Navigator)");
 			case 3:
-			return NSLocalizedString(@"Execution Privilege", @"execution privilege label (Navigator)");
+				return NSLocalizedString(@"Execution Privilege", @"execution privilege label (Navigator)");
 			case 4:
-			return NSLocalizedString(@"Definer",@"definer label (Navigator)");
+				return NSLocalizedString(@"Definer", @"definer label (Navigator)");
 		}
-	if(type == 3) // FUNCTION
-		switch(anIndex) {
+	}
+	else if(type == SPTableTypeFunc) {
+		switch (anIndex) {
 			case 0:
-			return NSLocalizedString(@"Return Type", @"return type label (Navigator)");
+				return NSLocalizedString(@"Return Type", @"return type label (Navigator)");
 			case 1:
-			return NSLocalizedString(@"SQL Data Access",@"sql data access label (Navigator)");
+				return NSLocalizedString(@"SQL Data Access", @"sql data access label (Navigator)");
 			case 2:
-			return NSLocalizedString(@"Is Deterministic",@"is deterministic label (Navigator)");
+				return NSLocalizedString(@"Is Deterministic", @"is deterministic label (Navigator)");
 			case 3:
-			return NSLocalizedString(@"Execution Privilege", @"execution privilege label (Navigator)");
+				return NSLocalizedString(@"Execution Privilege", @"execution privilege label (Navigator)");
 			case 4:
-			return NSLocalizedString(@"Definer",@"definer label (Navigator)");
+				return NSLocalizedString(@"Definer", @"definer label (Navigator)");
 		}
+	}
 	return @"";
 }
 #endif

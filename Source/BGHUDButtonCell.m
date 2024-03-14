@@ -918,15 +918,13 @@
 			break;
 
 		case NSImageBelow:
-
-			break;
-
 		case NSImageAbove:
-
-			break;
-
 		case NSImageOverlaps:
-
+		case NSNoImage:
+#if __MAC_OS_X_VERSION_MAX_ALLOWED >= __MAC_10_12
+		case NSImageLeading:
+		case NSImageTrailing:
+#endif
 			break;
 	}
 

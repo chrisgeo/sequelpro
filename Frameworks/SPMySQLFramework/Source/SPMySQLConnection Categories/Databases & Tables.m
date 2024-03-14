@@ -45,7 +45,6 @@
  */
 - (BOOL)selectDatabase:(NSString *)aDatabase
 {
-
 	// If no database was supplied, can't deselected - return NO.
 	if (!aDatabase) return NO;
 
@@ -96,7 +95,6 @@
  */
 - (NSArray *)databases
 {
-
 	// Wrap the related databasesLike: function to avoid code duplication
 	return [self databasesLike:nil];
 }
@@ -124,6 +122,7 @@
 	// Perform the query and record state
 	SPMySQLResult *databaseResult = [self queryString:databaseQuery];
 	[databaseResult setDefaultRowReturnType:SPMySQLResultRowAsArray];
+	[databaseResult setReturnDataAsStrings:YES]; //see #2699
 
 	// Retrieve the result into an array if the query was successful
 	if (![self queryErrored]) {
@@ -150,7 +149,6 @@
  */
 - (NSArray *)tables
 {
-
 	// Wrap the related tablesLike:fromDatabase: function to avoid code duplication
 	return [self tablesLike:nil fromDatabase:nil];
 }
@@ -165,10 +163,8 @@
  */
 - (NSArray *)tablesLike:(NSString *)nameLikeString
 {
-
 	// Wrap the related tablesLike:fromDatabase: function to avoid code duplication
 	return [self tablesLike:nameLikeString fromDatabase:nil];
-
 }
 
 /**
@@ -179,10 +175,8 @@
  */
 - (NSArray *)tablesFromDatabase:(NSString *)aDatabase
 {
-
 	// Wrap the related tablesLike:fromDatabase: function to avoid code duplication
 	return [self tablesLike:nil fromDatabase:aDatabase];
-
 }
 
 /**
@@ -245,7 +239,6 @@
  */
 - (BOOL)_storeAndAlterEncodingToUTF8IfRequired
 {
-
 	// If the encoding is already UTF8, no change is required.
 	if ([encoding isEqualToString:@"utf8"] && !encodingUsesLatin1Transport) return NO;
 
